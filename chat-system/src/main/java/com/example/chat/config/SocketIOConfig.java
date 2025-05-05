@@ -13,10 +13,10 @@ import com.example.chat.service.UserService;
 @org.springframework.context.annotation.Configuration
 public class SocketIOConfig {
 
-    @Value("${socketio.host}")
+    @Value("${socketio.host:0.0.0.0}")
     private String host;
     
-    @Value("${socketio.port}")
+    @Value("${socketio.port:19098}")
     private int port;
     
     @Value("${socketio.bossCount:1}")
@@ -51,6 +51,11 @@ public class SocketIOConfig {
         config.setUpgradeTimeout(upgradeTimeout);
         config.setPingTimeout(pingTimeout);
         config.setPingInterval(pingInterval);
+        
+        // 增加重试次数和超时设置
+        config.setMaxFramePayloadLength(1024 * 1024);
+        config.setMaxHttpContentLength(1024 * 1024);
+        config.setOrigin("*");
         
         // 允许跨域
         config.setOrigin("http://localhost:5173");

@@ -5,6 +5,7 @@ import com.corundumstudio.socketio.SocketIOClient;
 import com.corundumstudio.socketio.SocketIOServer;
 import com.corundumstudio.socketio.listener.ConnectListener;
 import com.corundumstudio.socketio.listener.DisconnectListener;
+import com.corundumstudio.socketio.listener.PingListener;
 import com.example.chat.model.ChatMessage;
 import com.example.chat.model.User;
 import com.example.chat.service.MessageService;
@@ -24,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -36,6 +38,10 @@ public class SocketIOAdapter {
     // 存储用户ID与客户端的映射关系
     private final Map<String, SocketIOClient> userClients = new ConcurrentHashMap<>();
     
+    // 重试次数和间隔
+    private static final int MAX_RETRY_COUNT = 3;
+    private static final long RETRY_INTERVAL = 5000; // 5秒
+    
     @Autowired
     public SocketIOAdapter(SocketIOServer server, UserService userService, MessageService messageService) {
         this.server = server;
@@ -45,14 +51,16 @@ public class SocketIOAdapter {
         // 注册事件监听器
         this.server.addConnectListener(onConnected());
         this.server.addDisconnectListener(onDisconnected());
+        this.server.addPingListener(onPing());
         
-        // 注册消息处理事件 - 与chat-app兼容的事件名称
+        // 注册消息处理事件
         this.server.addEventListener("sendMessage", Map.class, 
             (client, data, ack) -> {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> messageData = (Map<String, Object>) data;
                 handleChatMessage(client, messageData, ack);
             });
+            
         this.server.addEventListener("getOnlineUsers", Object.class, 
             (client, data, ack) -> handleGetOnlineUsers(client, data, ack));
         
@@ -92,6 +100,15 @@ public class SocketIOAdapter {
             server.stop();
             log.info("Socket.IO server stopped");
         }
+    }
+    
+    private PingListener onPing() {
+        return client -> {
+            String userId = client.get("userId");
+            if (userId != null) {
+                log.debug("Ping received from user: {}", userId);
+            }
+        };
     }
     
     private ConnectListener onConnected() {
@@ -218,10 +235,12 @@ public class SocketIOAdapter {
         
         log.info("User {} requested online users", userId);
         
-        // 获取所有在线用户
-        List<User> onlineUsers = userService.getOnlineUsers();
-        List<Map<String, Object>> userList = new ArrayList<>();
+        // 获取所有在线用户，并过滤掉当前用户
+        List<User> onlineUsers = userService.getOnlineUsers().stream()
+                .filter(user -> !user.getId().equals(userId))
+                .collect(Collectors.toList());
         
+        List<Map<String, Object>> userList = new ArrayList<>();
         for (User user : onlineUsers) {
             userList.add(convertUserToClientFormat(user));
         }

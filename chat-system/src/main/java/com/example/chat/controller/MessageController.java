@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/messages")
@@ -43,8 +44,10 @@ public class MessageController {
                 return ResponseEntity.status(401).build();
             }
             
-            // 获取所有在线用户
-            List<User> users = userService.getOnlineUsers();
+            // 获取所有在线用户，并过滤掉当前用户
+            List<User> users = userService.getOnlineUsers().stream()
+                    .filter(user -> !user.getId().equals(currentUserId))
+                    .collect(Collectors.toList());
             return ResponseEntity.ok(users);
         } catch (Exception e) {
             log.error("Error getting users", e);
