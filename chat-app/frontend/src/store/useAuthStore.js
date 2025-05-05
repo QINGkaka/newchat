@@ -32,22 +32,22 @@ export const useAuthStore = create((set, get) => ({
                     ...response.data.user,
                     token: response.data.token || authUser.token
                 };
+                console.log('Setting user data:', userData);
                 localStorage.setItem('authUser', JSON.stringify(userData));
-                set({authUser: userData});
+                set({authUser: userData, isCheckingAuth: false});
                 get().connectSocket();
             } else {
+                console.log('Authentication failed, clearing user data');
                 localStorage.removeItem('authUser');
-                set({authUser: null});
+                set({authUser: null, isCheckingAuth: false});
             }
         } catch (error) {
             console.error('Auth check error:', error);
             localStorage.removeItem('authUser');
-            set({authUser: null});
+            set({authUser: null, isCheckingAuth: false});
             if (error.response) {
                 console.error('Error response:', error.response.data);
             }
-        } finally {
-            set({isCheckingAuth: false});
         }
     },
 
@@ -138,7 +138,9 @@ export const useAuthStore = create((set, get) => ({
 
     connectSocket: () => {
         const {authUser, socket} = get();
-        if (!authUser) {
+        console.log('Current auth user:', authUser);
+        
+        if (!authUser?.token) {
             console.error('No authenticated user found');
             return;
         }
@@ -152,20 +154,19 @@ export const useAuthStore = create((set, get) => ({
             console.log('Connecting to socket with user:', authUser._id);
             
             const newSocket = io(BASE_URL, {
-                transports: ['websocket', 'polling'],
+                transports: ['websocket'],
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
                 timeout: 20000,
-                path: '/socket.io',
                 auth: {
-                    token: authUser.token
-                },
-                query: {
                     token: authUser.token
                 },
                 withCredentials: true,
                 forceNew: true,
+                query: {
+                    token: authUser.token
+                },
                 extraHeaders: {
                     'Authorization': `Bearer ${authUser.token}`
                 }
