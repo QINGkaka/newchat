@@ -38,13 +38,33 @@ export const useChatStore = create((set, get) => ({
         set({ isMessagesLoading: true });
         try {
             const res = await axiosInstance.get(`/api/messages/${userId}`);
+            console.log('Messages response:', res.data);
             set({ messages: res.data });
         } catch (error) {
-            toast.error(error.response.data.message);
+            console.error('Error fetching messages:', error);
+            toast.error(error.response?.data?.message || '获取消息失败');
         } finally {
             set({ isMessagesLoading: false });
         }
     },
+
+    addMessage: (message) => {
+        console.log('Adding message:', message);
+        const { messages } = get();
+        
+        // 检查消息是否已存在
+        const messageExists = messages.some(m => 
+            m._id === message._id || 
+            m.messageId === message.messageId ||
+            (m.senderId === message.senderId && 
+             m.timestamp === message.timestamp)
+        );
+
+        if (!messageExists) {
+            set({ messages: [...messages, message] });
+        }
+    },
+
     sendMessage: async (messageData) => {
         const { selectedUser, messages } = get();
         try {
@@ -79,5 +99,8 @@ export const useChatStore = create((set, get) => ({
         socket.off("newMessage");
     },
 
-    setSelectedUser: (selectedUser) => set({ selectedUser }),
+    setSelectedUser: (selectedUser) => {
+        console.log('Setting selected user:', selectedUser);
+        set({ selectedUser });
+    }
 }));

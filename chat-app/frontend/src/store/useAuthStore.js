@@ -137,24 +137,26 @@ export const useAuthStore = create((set, get) => ({
     },
 
     connectSocket: () => {
-        const {authUser, socket} = get();
-        console.log('Current auth user:', authUser);
-        
+        const { authUser } = get();
         if (!authUser?.token) {
             console.error('No authenticated user found');
             return;
         }
 
-        if (socket) {
+        console.log('Current auth user:', authUser);
+
+        // 如果已经有连接，先断开
+        if (get().socket) {
             console.log('Disconnecting existing socket...');
-            socket.disconnect();
+            get().socket.disconnect();
         }
 
         try {
-            console.log('Connecting to socket with user:', authUser._id);
+            console.log('Connecting to socket with user:', authUser.id);
             
-            const newSocket = io(BASE_URL, {
+            const socket = io('http://localhost:19098', {
                 transports: ['websocket'],
+                withCredentials: true,
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
@@ -162,8 +164,6 @@ export const useAuthStore = create((set, get) => ({
                 auth: {
                     token: authUser.token
                 },
-                withCredentials: true,
-                forceNew: true,
                 query: {
                     token: authUser.token
                 },
@@ -172,45 +172,79 @@ export const useAuthStore = create((set, get) => ({
                 }
             });
 
-            newSocket.on('connect', () => {
+            socket.on('connect', () => {
                 console.log('Socket connected successfully');
-                set({socket: newSocket, socketConnected: true});
+                // 发送认证消息
+                socket.emit('authenticate', { token: authUser.token }, (response) => {
+                    if (response.success) {
+                        console.log('Socket authenticated successfully');
+                        // 更新用户在线状态
+                        set(state => ({
+                            ...state,
+                            authUser: {
+                                ...state.authUser,
+                                online: true
+                            },
+                            socketConnected: true
+                        }));
+                        // 请求在线用户列表
+                        socket.emit('getOnlineUsers');
+                    } else {
+                        console.error('Socket authentication failed:', response.error);
+                    }
+                });
             });
 
-            newSocket.on('connect_error', (error) => {
-                console.error('Socket connection error:', error);
-                set({socketConnected: false});
-                toast.error('WebSocket连接失败');
-            });
-
-            newSocket.on('disconnect', (reason) => {
+            socket.on('disconnect', (reason) => {
                 console.log('Socket disconnected:', reason);
-                set({socketConnected: false});
-                if (reason === 'io server disconnect') {
-                    setTimeout(() => {
-                        get().connectSocket();
-                    }, 1000);
+                // 更新用户在线状态
+                set(state => ({
+                    ...state,
+                    authUser: {
+                        ...state.authUser,
+                        online: false
+                    },
+                    socketConnected: false
+                }));
+            });
+
+            socket.on('onlineUsers', (users) => {
+                console.log('Received online users:', users);
+                // 更新在线用户列表
+                set({ onlineUsers: users });
+                
+                // 更新当前用户的在线状态
+                const currentUser = users.find(user => user.id === authUser.id);
+                console.log('Current user in online list:', currentUser);
+                
+                if (currentUser) {
+                    console.log('Setting current user as online');
+                    set(state => ({
+                        ...state,
+                        authUser: {
+                            ...state.authUser,
+                            online: true
+                        }
+                    }));
                 }
             });
 
-            newSocket.on('error', (error) => {
+            // 添加错误处理
+            socket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+                set(state => ({
+                    ...state,
+                    socketConnected: false
+                }));
+            });
+
+            socket.on('error', (error) => {
                 console.error('Socket error:', error);
-                toast.error('WebSocket错误');
             });
 
-            newSocket.on('authenticated', () => {
-                console.log('Socket authenticated successfully');
-            });
-
-            newSocket.on('unauthorized', (error) => {
-                console.error('Socket unauthorized:', error);
-                toast.error('WebSocket认证失败');
-            });
-
-            set({socket: newSocket});
+            set({ socket });
         } catch (error) {
-            console.error('Failed to create socket:', error);
-            toast.error('WebSocket连接失败');
+            console.error('Failed to initialize socket:', error);
         }
     },
 

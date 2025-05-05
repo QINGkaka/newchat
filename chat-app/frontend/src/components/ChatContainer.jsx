@@ -1,6 +1,7 @@
 import { useChatStore } from "../store/useChatStore";
 import { useEffect, useRef } from "react";
 import wsClient from "../lib/websocket";
+import { toast } from "react-hot-toast";
 
 import ChatHeader from "./ChatHeader";
 import MessageInput from "./MessageInput.jsx";
@@ -21,23 +22,46 @@ const ChatContainer = () => {
     const messageEndRef = useRef(null);
 
     useEffect(() => {
+        if (!selectedUser?._id) return;
+
         getMessages(selectedUser._id);
         
-        // 加入聊天室
-        wsClient.joinRoom(selectedUser._id);
+        // 检查 WebSocket 连接状态
+        if (wsClient.getConnectionStatus() === 'connected') {
+            // 加入聊天室
+            wsClient.joinRoom(selectedUser._id).catch(error => {
+                console.error('Failed to join room:', error);
+                toast.error('加入聊天室失败');
+            });
+        } else {
+            console.error('WebSocket is not connected');
+            toast.error('WebSocket 连接已断开');
+        }
 
         // 添加消息处理器
         const messageHandler = (message) => {
+            console.log('Received message in ChatContainer:', message);
             if (message.type === 'message' && 
                 (message.senderId === selectedUser._id || message.senderId === authUser._id)) {
-                addMessage(message);
+                // 确保消息有正确的格式
+                const formattedMessage = {
+                    ...message,
+                    _id: message.messageId || message._id,
+                    createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
+                    timestamp: message.timestamp || Date.now()
+                };
+                addMessage(formattedMessage);
             }
         };
         wsClient.addMessageHandler(messageHandler);
 
         return () => {
             wsClient.removeMessageHandler(messageHandler);
-            wsClient.leaveRoom(selectedUser._id);
+            if (wsClient.getConnectionStatus() === 'connected') {
+                wsClient.leaveRoom(selectedUser._id).catch(error => {
+                    console.error('Failed to leave room:', error);
+                });
+            }
         };
     }, [selectedUser._id, authUser._id, getMessages, addMessage]);
 
@@ -47,16 +71,34 @@ const ChatContainer = () => {
         }
     }, [messages]);
 
-    const handleSendMessage = (text, image) => {
+    const handleSendMessage = async (text, image) => {
+        if (!wsClient.getConnectionStatus() === 'connected') {
+            toast.error('WebSocket 连接已断开');
+            return;
+        }
+
         const message = {
             type: 'message',
             roomId: selectedUser._id,
             text: text,
             image: image,
             senderId: authUser._id,
-            receiverId: selectedUser._id
+            receiverId: selectedUser._id,
+            timestamp: Date.now()
         };
-        wsClient.sendMessage(message);
+
+        try {
+            const response = await wsClient.sendMessage(message);
+            console.log('Message sent successfully:', response);
+            
+            // 使用服务器返回的消息ID和时间戳
+            if (response.message) {
+                addMessage(response.message);
+            }
+        } catch (error) {
+            console.error('Failed to send message:', error);
+            toast.error('发送消息失败');
+        }
     };
 
     if (isMessagesLoading) {

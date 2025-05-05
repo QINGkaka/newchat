@@ -11,19 +11,14 @@ class WebSocketClient {
     connect() {
         const authUser = useAuthStore.getState().authUser;
         console.log('WebSocket connect - Current auth user:', authUser);
-        
+
         if (!authUser?.token) {
             console.error('No authenticated user found');
             return;
         }
 
-        if (this.socket) {
-            console.log('Disconnecting existing socket...');
-            this.socket.disconnect();
-        }
-
         try {
-            console.log('Connecting to socket with user:', authUser._id);
+            console.log('Connecting to socket with user:', authUser.id);
             
             this.socket = io('http://localhost:19098', {
                 transports: ['websocket'],
@@ -46,22 +41,32 @@ class WebSocketClient {
             this.socket.on('connect', () => {
                 console.log('Socket.IO connected successfully');
                 this.connectionStatus = 'connected';
-            });
-
-            this.socket.on('disconnect', (reason) => {
-                console.log('Socket.IO disconnected:', reason);
-                this.connectionStatus = 'disconnected';
-                if (reason === 'io server disconnect') {
-                    console.log('Server disconnected, attempting to reconnect...');
-                    setTimeout(() => {
-                        this.connect();
-                    }, 1000);
-                }
+                
+                // 发送认证消息
+                this.socket.emit('authenticate', { token: authUser.token }, (response) => {
+                    if (response.success) {
+                        console.log('Socket authenticated successfully');
+                    } else {
+                        console.error('Socket authentication failed:', response.error);
+                    }
+                });
             });
 
             this.socket.on('connect_error', (error) => {
                 console.error('Socket.IO connection error:', error);
                 this.connectionStatus = 'error';
+            });
+
+            this.socket.on('disconnect', (reason) => {
+                console.log('Socket.IO disconnected:', reason);
+                this.connectionStatus = 'disconnected';
+                
+                // 如果是服务器主动断开，尝试重连
+                if (reason === 'io server disconnect') {
+                    setTimeout(() => {
+                        this.connect();
+                    }, 1000);
+                }
             });
 
             this.socket.on('error', (error) => {
@@ -71,7 +76,19 @@ class WebSocketClient {
 
             this.socket.on('message', (message) => {
                 console.log('Received message:', message);
-                this.messageHandlers.forEach(handler => handler(message));
+                // 确保消息有正确的格式
+                const formattedMessage = {
+                    ...message,
+                    _id: message.messageId || message._id,
+                    createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
+                    timestamp: message.timestamp || Date.now()
+                };
+                this.messageHandlers.forEach(handler => handler(formattedMessage));
+            });
+
+            this.socket.on('onlineUsers', (users) => {
+                console.log('Online users updated:', users);
+                useAuthStore.getState().setOnlineUsers(users);
             });
 
         } catch (error) {
@@ -118,7 +135,6 @@ class WebSocketClient {
         });
     }
 
-    // 新增：发送消息方法
     sendMessage(message) {
         if (!this.socket || this.connectionStatus !== 'connected') {
             console.error('Socket is not connected');
@@ -126,10 +142,25 @@ class WebSocketClient {
         }
 
         return new Promise((resolve, reject) => {
-            this.socket.emit('sendMessage', message, (response) => {
+            const messageWithTimestamp = {
+                ...message,
+                timestamp: Date.now()
+            };
+            
+            this.socket.emit('message', messageWithTimestamp, (response) => {
                 if (response.success) {
-                    resolve(response);
+                    console.log('Message sent successfully:', messageWithTimestamp);
+                    resolve({
+                        ...response,
+                        message: {
+                            ...messageWithTimestamp,
+                            _id: response.messageId,
+                            messageId: response.messageId,
+                            createdAt: new Date().toISOString()
+                        }
+                    });
                 } else {
+                    console.error('Failed to send message:', response.error);
                     reject(new Error(response.error || 'Failed to send message'));
                 }
             });
@@ -152,7 +183,6 @@ class WebSocketClient {
         }
     }
 
-    // 新增：获取连接状态
     getConnectionStatus() {
         return this.connectionStatus;
     }
