@@ -5,15 +5,209 @@ import io from "socket.io-client";
 
 const BASE_URL = 'http://localhost:19098';
 
+// 全局 socket 实例
+let globalSocket = null;
+let reconnectTimer = null;
+let heartbeatTimer = null;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 1000;
+const HEARTBEAT_INTERVAL = 30000;
+
 export const useAuthStore = create((set, get) => ({
     authUser: null,
     isSigningUp: false,
     isLoggingIn: false,
     isUpdatingProfile: false,
     isCheckingAuth: true,
-    onlineUsers:[],
-    socket:null,
+    onlineUsers: [],
     socketConnected: false,
+    isConnecting: false,
+    reconnectAttempts: 0,
+
+    // 清理所有计时器和连接
+    cleanup() {
+        console.log('Cleaning up socket connection...');
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        if (globalSocket) {
+            // 移除所有事件监听器
+            globalSocket.removeAllListeners();
+            globalSocket.disconnect();
+            globalSocket = null;
+        }
+        set({ 
+            socketConnected: false, 
+            isConnecting: false,
+            reconnectAttempts: 0,
+            onlineUsers: []
+        });
+    },
+
+    // 启动心跳检测
+    startHeartbeat() {
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+        }
+        heartbeatTimer = setInterval(() => {
+            if (globalSocket?.connected) {
+                globalSocket.emit('heartbeat', null, (response) => {
+                    if (!response?.success) {
+                        console.warn('Heartbeat failed, reconnecting...');
+                        get().reconnectSocket();
+                    }
+                });
+            }
+        }, HEARTBEAT_INTERVAL);
+    },
+
+    // 重连逻辑
+    async reconnectSocket() {
+        const {reconnectAttempts} = get();
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.error('Max reconnection attempts reached');
+            get().cleanup();
+            return;
+        }
+
+        set(state => ({ 
+            reconnectAttempts: state.reconnectAttempts + 1,
+            isConnecting: true 
+        }));
+
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+        }
+
+        reconnectTimer = setTimeout(() => {
+            get().connectSocket();
+        }, RECONNECT_DELAY * (reconnectAttempts + 1));
+    },
+
+    // 连接 WebSocket
+    connectSocket() {
+        const { authUser, isConnecting } = get();
+        
+        if (!authUser?.token || isConnecting || globalSocket?.connected) {
+            console.log('Socket connection skipped:', {
+                hasToken: !!authUser?.token,
+                isConnecting,
+                isConnected: globalSocket?.connected
+            });
+            return;
+        }
+
+        // 清理现有连接
+        get().cleanup();
+        set({ isConnecting: true });
+
+        try {
+            globalSocket = io(BASE_URL, {
+                transports: ['websocket'],
+                withCredentials: true,
+                reconnection: false, // 我们自己管理重连
+                timeout: 20000,
+                auth: { token: authUser.token },
+                query: { token: authUser.token }
+            });
+
+            globalSocket.on('connect', () => {
+                console.log('Socket connected successfully');
+                set({ 
+                    socketConnected: true,
+                    isConnecting: false,
+                    reconnectAttempts: 0
+                });
+                get().startHeartbeat();
+                
+                // 连接后立即请求在线用户列表
+                console.log('Requesting online users list...');
+                globalSocket.emit('getOnlineUsers');
+            });
+
+            // 添加用户状态更新处理
+            globalSocket.on('userStatus', (data) => {
+                console.log('Received user status update:', data);
+                set(state => {
+                    const updatedUsers = state.onlineUsers.map(user => 
+                        user.id === data.userId 
+                            ? { ...user, online: data.online }
+                            : user
+                    );
+                    
+                    // 如果用户不在列表中，可能需要重新获取完整列表
+                    if (!updatedUsers.some(user => user.id === data.userId)) {
+                        console.log('User not found in list, requesting full update...');
+                        globalSocket.emit('getOnlineUsers');
+                        return state;
+                    }
+                    
+                    return { ...state, onlineUsers: updatedUsers };
+                });
+            });
+
+            globalSocket.on('onlineUsers', (users) => {
+                console.log('Received online users list:', users);
+                // 确保用户列表包含在线状态，并保留现有用户的状态
+                set(state => {
+                    const currentUsers = new Map(
+                        state.onlineUsers.map(user => [user.id, user])
+                    );
+                    
+                    const updatedUsers = users.map(user => ({
+                        ...user,
+                        online: user.online ?? currentUsers.get(user.id)?.online ?? false
+                    }));
+
+                    console.log('Updated online users:', updatedUsers);
+                    return { ...state, onlineUsers: updatedUsers };
+                });
+            });
+
+            // 添加重连成功后的处理
+            globalSocket.on('reconnect', () => {
+                console.log('Socket reconnected, requesting online users list...');
+                globalSocket.emit('getOnlineUsers');
+            });
+
+            globalSocket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+                if (error.message.includes('ALREADY_CONNECTED')) {
+                    // 如果是重复连接错误，清理后重试
+                    console.log('Handling ALREADY_CONNECTED error...');
+                    get().cleanup();
+                    setTimeout(() => {
+                        console.log('Retrying connection...');
+                        get().connectSocket();
+                    }, 1000);
+                } else {
+                    get().reconnectSocket();
+                }
+            });
+
+            globalSocket.on('disconnect', (reason) => {
+                console.log('Socket disconnected:', reason);
+                set({ socketConnected: false });
+                if (reason === 'io server disconnect' || reason === 'transport close') {
+                    get().reconnectSocket();
+                }
+            });
+
+            globalSocket.on('error', (error) => {
+                console.error('Socket error:', error);
+                get().reconnectSocket();
+            });
+
+        } catch (error) {
+            console.error('Failed to initialize socket:', error);
+            get().reconnectSocket();
+        }
+    },
 
     async checkAuth() {
         try {
@@ -80,9 +274,18 @@ export const useAuthStore = create((set, get) => ({
 
     async logout() {
         try {
+            // 先清理 WebSocket 连接
+            get().cleanup();
+            
             await axiosInstance.post('/api/auth/logout');
             localStorage.removeItem('authUser');
-            set({authUser:null});
+            set({
+                authUser: null,
+                onlineUsers: [],
+                socketConnected: false,
+                isConnecting: false,
+                reconnectAttempts: 0
+            });
             toast.success('用户已经登出');
         } catch (error) {
             console.error('Logout error:', error);
@@ -96,21 +299,26 @@ export const useAuthStore = create((set, get) => ({
             console.log('Logging in with data:', data);
             const response = await axiosInstance.post('/api/auth/login', data);
             console.log('Login response:', response.data);
-            const userData = {
-                ...response.data.user,
-                token: response.data.token
-            };
-            localStorage.setItem('authUser', JSON.stringify(userData));
-            set({authUser: userData});
-            toast.success('用户登陆成功');
-            get().connectSocket();
+            if (response.data.user && response.data.token) {
+                const userData = {
+                    ...response.data.user,
+                    token: response.data.token
+                };
+                localStorage.setItem('authUser', JSON.stringify(userData));
+                set({authUser: userData});
+                toast.success('用户登陆成功');
+                get().connectSocket();
+            } else {
+                console.error('Invalid login response:', response.data);
+                toast.error("登录失败：服务器响应格式错误");
+            }
         } catch (error) {
             console.error('Login error:', error);
             if (error.response) {
                 console.error('Error response:', error.response.data);
-                toast.error(error.response.data.message || "登录失败");
+                toast.error(error.response.data.error || "登录失败");
             } else {
-                toast.error("登录失败");
+                toast.error("登录失败：无法连接到服务器");
             }
         } finally {
             set({isLoggingIn:false});
@@ -136,124 +344,8 @@ export const useAuthStore = create((set, get) => ({
         }
     },
 
-    connectSocket: () => {
-        const { authUser } = get();
-        if (!authUser?.token) {
-            console.error('No authenticated user found');
-            return;
-        }
-
-        console.log('Current auth user:', authUser);
-
-        // 如果已经有连接，先断开
-        if (get().socket) {
-            console.log('Disconnecting existing socket...');
-            get().socket.disconnect();
-        }
-
-        try {
-            console.log('Connecting to socket with user:', authUser.id);
-            
-            const socket = io('http://localhost:19098', {
-                transports: ['websocket'],
-                withCredentials: true,
-                reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-                timeout: 20000,
-                auth: {
-                    token: authUser.token
-                },
-                query: {
-                    token: authUser.token
-                },
-                extraHeaders: {
-                    'Authorization': `Bearer ${authUser.token}`
-                }
-            });
-
-            socket.on('connect', () => {
-                console.log('Socket connected successfully');
-                // 发送认证消息
-                socket.emit('authenticate', { token: authUser.token }, (response) => {
-                    if (response.success) {
-                        console.log('Socket authenticated successfully');
-                        // 更新用户在线状态
-                        set(state => ({
-                            ...state,
-                            authUser: {
-                                ...state.authUser,
-                                online: true
-                            },
-                            socketConnected: true
-                        }));
-                        // 请求在线用户列表
-                        socket.emit('getOnlineUsers');
-                    } else {
-                        console.error('Socket authentication failed:', response.error);
-                    }
-                });
-            });
-
-            socket.on('disconnect', (reason) => {
-                console.log('Socket disconnected:', reason);
-                // 更新用户在线状态
-                set(state => ({
-                    ...state,
-                    authUser: {
-                        ...state.authUser,
-                        online: false
-                    },
-                    socketConnected: false
-                }));
-            });
-
-            socket.on('onlineUsers', (users) => {
-                console.log('Received online users:', users);
-                // 更新在线用户列表
-                set({ onlineUsers: users });
-                
-                // 更新当前用户的在线状态
-                const currentUser = users.find(user => user.id === authUser.id);
-                console.log('Current user in online list:', currentUser);
-                
-                if (currentUser) {
-                    console.log('Setting current user as online');
-                    set(state => ({
-                        ...state,
-                        authUser: {
-                            ...state.authUser,
-                            online: true
-                        }
-                    }));
-                }
-            });
-
-            // 添加错误处理
-            socket.on('connect_error', (error) => {
-                console.error('Socket connection error:', error);
-                set(state => ({
-                    ...state,
-                    socketConnected: false
-                }));
-            });
-
-            socket.on('error', (error) => {
-                console.error('Socket error:', error);
-            });
-
-            set({ socket });
-        } catch (error) {
-            console.error('Failed to initialize socket:', error);
-        }
-    },
-
     disconnectSocket() {
-        const {socket} = get();
-        if (socket) {
-            console.log('Disconnecting socket...');
-            socket.disconnect();
-            set({socket: null, socketConnected: false});
-        }
+        console.log('Disconnecting socket...');
+        get().cleanup();
     }
 }));

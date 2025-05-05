@@ -5,7 +5,6 @@ import com.corundumstudio.socketio.SocketIOClient;
 import com.corundumstudio.socketio.SocketIOServer;
 import com.corundumstudio.socketio.listener.ConnectListener;
 import com.corundumstudio.socketio.listener.DisconnectListener;
-import com.corundumstudio.socketio.listener.PingListener;
 import com.example.chat.model.ChatMessage;
 import com.example.chat.model.User;
 import com.example.chat.service.MessageService;
@@ -18,14 +17,15 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -36,7 +36,7 @@ public class SocketIOAdapter {
     private final MessageService messageService;
     
     // 存储用户ID与客户端的映射关系
-    private final Map<String, SocketIOClient> userClients = new ConcurrentHashMap<>();
+    private final Map<String, Set<SocketIOClient>> userClients = new ConcurrentHashMap<>();
     
     // 重试次数和间隔
     private static final int MAX_RETRY_COUNT = 3;
@@ -51,7 +51,7 @@ public class SocketIOAdapter {
         // 注册事件监听器
         this.server.addConnectListener(onConnected());
         this.server.addDisconnectListener(onDisconnected());
-        this.server.addPingListener(onPing());
+        this.server.addEventListener("ping", Object.class, (client, data, ack) -> onPing(client));
         
         // 注册消息处理事件
         this.server.addEventListener("sendMessage", Map.class, 
@@ -82,14 +82,26 @@ public class SocketIOAdapter {
     @PostConstruct
     public void start() {
         try {
+            // 配置 Socket.IO 服务器
+            com.corundumstudio.socketio.Configuration config = server.getConfiguration();
+            config.setPingTimeout(60000);  // 60秒 ping 超时
+            config.setPingInterval(25000); // 25秒发送一次 ping
+            config.setAllowCustomRequests(true);
+            config.setUpgradeTimeout(10000);
+            config.setMaxFramePayloadLength(1024 * 1024); // 1MB
+            config.setAllowHeaders("*");
+            
             // 启动服务器
             server.start();
             log.info("Socket.IO server started on {}:{}", 
-                    server.getConfiguration().getHostname(), 
-                    server.getConfiguration().getPort());
+                    config.getHostname(), 
+                    config.getPort());
+                    
+            // 启动心跳超时检查定时任务
+            ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+            executor.scheduleAtFixedRate(this::checkHeartbeatTimeout, 30, 30, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.error("Failed to start Socket.IO server", e);
-            // 尝试重新启动
             scheduleRestart();
         }
     }
@@ -102,13 +114,32 @@ public class SocketIOAdapter {
         }
     }
     
-    private PingListener onPing() {
-        return client -> {
-            String userId = client.get("userId");
-            if (userId != null) {
-                log.debug("Ping received from user: {}", userId);
+    private void onPing(SocketIOClient client) {
+        String userId = client.get("userId");
+        if (userId != null) {
+            log.debug("Ping received from user: {}", userId);
+            // 更新用户最后心跳时间
+            client.set("lastPingTime", System.currentTimeMillis());
+            
+            // 发送 pong 响应
+            Map<String, Object> pongData = new HashMap<>();
+            pongData.put("timestamp", System.currentTimeMillis());
+            client.sendEvent("pong", pongData);
+            
+            // 更新用户在线状态
+            User user = userService.getUserById(userId);
+            if (user != null) {
+                boolean wasOnline = user.isOnline();
+                user.setOnline(true);
+                userService.updateUser(user);
+                
+                // 只有在状态发生变化时才广播
+                if (!wasOnline) {
+                    broadcastUserStatus(userId, true);
+                    log.info("User {} marked as online after receiving ping", userId);
+                }
             }
-        };
+        }
     }
     
     private ConnectListener onConnected() {
@@ -133,45 +164,146 @@ public class SocketIOAdapter {
             if (userId != null) {
                 // 将用户ID与客户端关联
                 client.set("userId", userId);
-                userClients.put(userId, client);
+                client.set("lastPingTime", System.currentTimeMillis());
+                client.set("connectTime", System.currentTimeMillis());
                 
-                // 更新用户在线状态
-                User user = userService.getUserById(userId);
-                if (user != null) {
-                    user.setOnline(true);
-                    userService.updateUser(user);
+                synchronized (userClients) {
+                    Set<SocketIOClient> clients = userClients.computeIfAbsent(userId, k -> new HashSet<>());
+                    
+                    // 检查是否已有连接
+                    if (!clients.isEmpty()) {
+                        // 如果已有连接，检查最后心跳时间
+                        boolean hasActiveConnection = false;
+                        for (SocketIOClient existingClient : new HashSet<>(clients)) {
+                            Long lastPingTime = existingClient.get("lastPingTime");
+                            if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                                hasActiveConnection = true;
+                                break;
+                            }
+                        }
+                        
+                        if (hasActiveConnection) {
+                            // 如果有活跃连接，发送错误消息给客户端
+                            Map<String, Object> errorData = new HashMap<>();
+                            errorData.put("error", "ALREADY_CONNECTED");
+                            errorData.put("message", "You already have an active connection");
+                            client.sendEvent("error", errorData);
+                            log.warn("User {} already has active connection, rejecting new connection", userId);
+                            client.disconnect();
+                            return;
+                        } else {
+                            // 如果没有活跃连接，清理旧连接
+                            for (SocketIOClient oldClient : new HashSet<>(clients)) {
+                                try {
+                                    oldClient.disconnect();
+                                    log.info("Disconnected inactive client: {} for user: {}", oldClient.getSessionId(), userId);
+                                } catch (Exception e) {
+                                    log.error("Error disconnecting old client: {}", oldClient.getSessionId(), e);
+                                }
+                            }
+                            clients.clear();
+                        }
+                    }
+                    
+                    // 添加新连接
+                    clients.add(client);
+                    
+                    // 更新用户在线状态
+                    User user = userService.getUserById(userId);
+                    if (user != null) {
+                        user.setOnline(true);
+                        userService.updateUser(user);
+                        broadcastUserStatus(userId, true);
+                        log.info("User {} marked as online with new connection: {}", userId, client.getSessionId());
+                    }
                 }
                 
-                // 广播用户上线状态
-                broadcastUserStatus(userId, true);
+                // 发送当前在线用户列表给新连接的客户端
+                sendOnlineUsersToClient(client);
                 
-                log.info("Client connected: {}, userId: {}", client.getSessionId(), userId);
+                // 发送连接成功消息
+                Map<String, Object> successData = new HashMap<>();
+                successData.put("status", "CONNECTED");
+                successData.put("message", "Successfully connected to server");
+                client.sendEvent("connectionStatus", successData);
+                
+                log.info("Client connected: {}, userId: {}, total connections: {}", 
+                    client.getSessionId(), userId, userClients.get(userId).size());
             } else {
-                // 认证失败，断开连接
+                Map<String, Object> errorData = new HashMap<>();
+                errorData.put("error", "AUTH_FAILED");
+                errorData.put("message", "Authentication failed");
+                client.sendEvent("error", errorData);
                 client.disconnect();
                 log.warn("Authentication failed for client: {}", client.getSessionId());
             }
         };
     }
     
+    // 发送在线用户列表给指定客户端
+    private void sendOnlineUsersToClient(SocketIOClient client) {
+        String userId = client.get("userId");
+        if (userId == null) {
+            return;
+        }
+        
+        List<User> allUsers = userService.getAllUsers();
+        List<Map<String, Object>> userList = new ArrayList<>();
+        
+        for (User user : allUsers) {
+            if (!user.getId().equals(userId)) {
+                Map<String, Object> userData = convertUserToClientFormat(user);
+                // 检查用户是否真的在线（有活跃连接且最近有心跳）
+                boolean isReallyOnline = false;
+                Set<SocketIOClient> userClients = this.userClients.get(user.getId());
+                if (userClients != null && !userClients.isEmpty()) {
+                    for (SocketIOClient c : userClients) {
+                        Long lastPingTime = c.get("lastPingTime");
+                        if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                            isReallyOnline = true;
+                            break;
+                        }
+                    }
+                }
+                userData.put("online", isReallyOnline);
+                userList.add(userData);
+            }
+        }
+        
+        try {
+            client.sendEvent("onlineUsers", userList);
+            log.debug("Sent online users list to client: {}", client.getSessionId());
+        } catch (Exception e) {
+            log.error("Failed to send online users list to client: {}", client.getSessionId(), e);
+        }
+    }
+    
     private DisconnectListener onDisconnected() {
         return client -> {
             String userId = client.get("userId");
             if (userId != null) {
-                // 移除客户端映射
-                userClients.remove(userId);
+                Long connectTime = client.get("connectTime");
+                long connectionDuration = connectTime != null ? 
+                    System.currentTimeMillis() - connectTime : 0;
                 
-                // 更新用户在线状态
-                User user = userService.getUserById(userId);
-                if (user != null) {
-                    user.setOnline(false);
-                    userService.updateUser(user);
+                synchronized (userClients) {
+                    Set<SocketIOClient> clients = userClients.get(userId);
+                    if (clients != null) {
+                        clients.remove(client);
+                        log.info("Client disconnected: {}, userId: {}, connection duration: {}ms, remaining connections: {}", 
+                            client.getSessionId(), userId, connectionDuration, clients.size());
+                            
+                        if (clients.isEmpty()) {
+                            User user = userService.getUserById(userId);
+                            if (user != null) {
+                                user.setOnline(false);
+                                userService.updateUser(user);
+                                broadcastUserStatus(userId, false);
+                                log.info("User {} marked as offline after {}ms connection", userId, connectionDuration);
+                            }
+                        }
+                    }
                 }
-                
-                // 广播用户下线状态
-                broadcastUserStatus(userId, false);
-                
-                log.info("Client disconnected: {}, userId: {}", client.getSessionId(), userId);
             }
         };
     }
@@ -183,6 +315,9 @@ public class SocketIOAdapter {
             log.warn("Received message from unauthenticated client");
             return;
         }
+        
+        // 更新最后活动时间
+        client.set("lastPingTime", System.currentTimeMillis());
         
         log.info("Received message from user {}: {}", userId, data);
         
@@ -235,19 +370,42 @@ public class SocketIOAdapter {
         
         log.info("User {} requested online users", userId);
         
-        // 获取所有在线用户，并过滤掉当前用户
-        List<User> onlineUsers = userService.getOnlineUsers().stream()
-                .filter(user -> !user.getId().equals(userId))
-                .collect(Collectors.toList());
-        
+        // 获取所有用户
+        List<User> allUsers = userService.getAllUsers();
         List<Map<String, Object>> userList = new ArrayList<>();
-        for (User user : onlineUsers) {
-            userList.add(convertUserToClientFormat(user));
+        
+        for (User user : allUsers) {
+            if (!user.getId().equals(userId)) {  // 排除当前用户
+                Map<String, Object> userData = convertUserToClientFormat(user);
+                
+                // 检查用户是否真的在线（有活跃连接且最近有心跳）
+                boolean isReallyOnline = false;
+                Set<SocketIOClient> userClients = this.userClients.get(user.getId());
+                if (userClients != null && !userClients.isEmpty()) {
+                    for (SocketIOClient c : userClients) {
+                        Long lastPingTime = c.get("lastPingTime");
+                        if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                            isReallyOnline = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // 更新用户在线状态
+                if (isReallyOnline != user.isOnline()) {
+                    user.setOnline(isReallyOnline);
+                    userService.updateUser(user);
+                }
+                
+                userData.put("online", isReallyOnline);
+                userList.add(userData);
+            }
         }
         
         // 发送响应
         if (ackRequest.isAckRequested()) {
             ackRequest.sendAckData(userList);
+            log.debug("Sent online users list to client: {}, count: {}", client.getSessionId(), userList.size());
         }
     }
     
@@ -261,19 +419,89 @@ public class SocketIOAdapter {
             statusData.put("online", online);
             statusData.put("timestamp", System.currentTimeMillis());
             
-            server.getBroadcastOperations().sendEvent("userStatus", statusData);
+            // 广播给所有在线用户
+            for (Map.Entry<String, Set<SocketIOClient>> entry : userClients.entrySet()) {
+                Set<SocketIOClient> clients = entry.getValue();
+                
+                // 检查目标用户是否有活跃连接
+                boolean hasActiveConnection = false;
+                for (SocketIOClient client : clients) {
+                    Long lastPingTime = client.get("lastPingTime");
+                    if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                        hasActiveConnection = true;
+                        break;
+                    }
+                }
+                
+                if (hasActiveConnection) {
+                    // 只发送给有活跃连接的用户
+                    for (SocketIOClient client : clients) {
+                        try {
+                            client.sendEvent("userStatus", statusData);
+                            log.debug("Sent user status update to client: {}, user: {}, online: {}", 
+                                client.getSessionId(), userId, online);
+                        } catch (Exception e) {
+                            log.error("Failed to send user status to client: {}", client.getSessionId(), e);
+                        }
+                    }
+                }
+            }
         }
     }
     
     // 发送消息给指定用户
     public void sendMessageToUser(String userId, ChatMessage message) {
-        SocketIOClient client = userClients.get(userId);
-        if (client != null) {
-            // 转换为客户端期望的格式
+        Set<SocketIOClient> clients = userClients.get(userId);
+        boolean messageSent = false;
+        
+        if (clients != null && !clients.isEmpty()) {
             Map<String, Object> messageData = convertToClientFormat(message);
+            log.info("Sending message to user: {}, messageId: {}, clients: {}", userId, message.getId(), clients.size());
             
-            // 发送新消息事件
-            client.sendEvent("newMessage", messageData);
+            for (SocketIOClient client : clients) {
+                // 检查客户端是否活跃
+                Long lastPingTime = client.get("lastPingTime");
+                if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                    try {
+                        client.sendEvent("newMessage", messageData);
+                        messageSent = true;
+                        log.debug("Message sent to client: {}", client.getSessionId());
+                    } catch (Exception e) {
+                        log.error("Failed to send message to client: {}", client.getSessionId(), e);
+                    }
+                }
+            }
+        }
+        
+        if (!messageSent) {
+            // 如果消息没有发送成功，检查用户状态
+            User user = userService.getUserById(userId);
+            if (user != null) {
+                boolean isReallyOnline = false;
+                if (clients != null) {
+                    for (SocketIOClient client : clients) {
+                        Long lastPingTime = client.get("lastPingTime");
+                        if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
+                            isReallyOnline = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // 更新用户在线状态
+                if (user.isOnline() != isReallyOnline) {
+                    user.setOnline(isReallyOnline);
+                    userService.updateUser(user);
+                    broadcastUserStatus(userId, isReallyOnline);
+                    log.info("Updated user {} online status to: {}", userId, isReallyOnline);
+                }
+                
+                if (!isReallyOnline) {
+                    log.warn("User {} is offline, message not sent: {}", userId, message.getId());
+                }
+            } else {
+                log.warn("User {} not found, message not sent: {}", userId, message.getId());
+            }
         }
     }
     
@@ -433,21 +661,49 @@ public class SocketIOAdapter {
     }
 
     private void scheduleRestart() {
-        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-        executor.schedule(() -> {
-            log.info("Attempting to restart Socket.IO server...");
+        int retryCount = 0;
+        while (retryCount < MAX_RETRY_COUNT) {
             try {
-                if (server != null) {
-                    server.stop();
-                }
+                Thread.sleep(RETRY_INTERVAL);
                 server.start();
-                log.info("Socket.IO server restarted successfully");
+                log.info("Socket.IO server restarted successfully after {} attempts", retryCount + 1);
+                return;
             } catch (Exception e) {
-                log.error("Failed to restart Socket.IO server", e);
-                // 继续尝试重启
-                scheduleRestart();
+                retryCount++;
+                log.error("Failed to restart Socket.IO server (attempt {}/{})", retryCount, MAX_RETRY_COUNT, e);
             }
-        }, 10, TimeUnit.SECONDS);
+        }
+        log.error("Failed to restart Socket.IO server after {} attempts", MAX_RETRY_COUNT);
+    }
+
+    // 增加心跳超时检查
+    private void checkHeartbeatTimeout() {
+        long currentTime = System.currentTimeMillis();
+        long timeout = 120000; // 增加到120秒超时
+        for (Map.Entry<String, Set<SocketIOClient>> entry : userClients.entrySet()) {
+            String userId = entry.getKey();
+            Set<SocketIOClient> clients = entry.getValue();
+            clients.removeIf(client -> {
+                Long lastPingTime = client.get("lastPingTime");
+                if (lastPingTime == null || currentTime - lastPingTime > timeout) {
+                    log.warn("Client {} heartbeat timeout (last ping: {}ms ago), disconnecting", 
+                        client.getSessionId(), 
+                        lastPingTime != null ? currentTime - lastPingTime : -1);
+                    client.disconnect();
+                    return true;
+                }
+                return false;
+            });
+            if (clients.isEmpty()) {
+                User user = userService.getUserById(userId);
+                if (user != null) {
+                    user.setOnline(false);
+                    userService.updateUser(user);
+                    broadcastUserStatus(userId, false);
+                    log.info("User {} marked as offline due to no active connections", userId);
+                }
+            }
+        }
     }
 }
 

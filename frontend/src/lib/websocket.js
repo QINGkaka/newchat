@@ -1,110 +1,53 @@
-import io from 'socket.io-client';  // 修改导入语句
 import { useAuthStore } from '../store/useAuthStore';
 
 class WebSocketClient {
     constructor() {
-        this.socket = null;
         this.messageHandlers = new Set();
-        this.connectionStatus = 'disconnected'; // 新增：连接状态跟踪
     }
 
+    // 添加connect方法
     connect() {
-        const authUser = useAuthStore.getState().authUser;
-        console.log('WebSocket connect - Current auth user:', authUser);
-
-        if (!authUser?.token) {
-            console.error('No authenticated user found');
-            return;
+        const store = useAuthStore.getState();
+        if (!store.socketConnected) {
+            store.connectSocket();
         }
+        return store.socketConnected;
+    }
 
-        try {
-            console.log('Connecting to socket with user:', authUser.id);
-            
-            this.socket = io('http://localhost:19098', {
-                transports: ['websocket'],
-                withCredentials: true,
-                reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-                timeout: 20000,
-                auth: {
-                    token: authUser.token
-                },
-                query: {
-                    token: authUser.token
-                },
-                extraHeaders: {
-                    'Authorization': `Bearer ${authUser.token}`
-                }
-            });
-
-            this.socket.on('connect', () => {
-                console.log('Socket.IO connected successfully');
-                this.connectionStatus = 'connected';
-                
-                // 发送认证消息
-                this.socket.emit('authenticate', { token: authUser.token }, (response) => {
-                    if (response.success) {
-                        console.log('Socket authenticated successfully');
-                    } else {
-                        console.error('Socket authentication failed:', response.error);
-                    }
-                });
-            });
-
-            this.socket.on('connect_error', (error) => {
-                console.error('Socket.IO connection error:', error);
-                this.connectionStatus = 'error';
-            });
-
-            this.socket.on('disconnect', (reason) => {
-                console.log('Socket.IO disconnected:', reason);
-                this.connectionStatus = 'disconnected';
-                
-                // 如果是服务器主动断开，尝试重连
-                if (reason === 'io server disconnect') {
-                    setTimeout(() => {
-                        this.connect();
-                    }, 1000);
-                }
-            });
-
-            this.socket.on('error', (error) => {
-                console.error('Socket.IO error:', error);
-                this.connectionStatus = 'error';
-            });
-
-            this.socket.on('message', (message) => {
-                console.log('Received message:', message);
-                // 确保消息有正确的格式
-                const formattedMessage = {
-                    ...message,
-                    _id: message.messageId || message._id,
-                    createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
-                    timestamp: message.timestamp || Date.now()
-                };
-                this.messageHandlers.forEach(handler => handler(formattedMessage));
-            });
-
-            this.socket.on('onlineUsers', (users) => {
-                console.log('Online users updated:', users);
-                useAuthStore.getState().setOnlineUsers(users);
-            });
-
-        } catch (error) {
-            console.error('Failed to initialize Socket.IO:', error);
-            this.connectionStatus = 'error';
+    // 添加disconnect方法
+    disconnect() {
+        const store = useAuthStore.getState();
+        if (store.socketConnected) {
+            store.disconnectSocket();
         }
+    }
+
+    // 获取连接状态
+    getConnectionStatus() {
+        return this.isConnected() ? 'connected' : 'disconnected';
+    }
+
+    // 获取全局 socket 实例
+    getSocket() {
+        const store = useAuthStore.getState();
+        return store.globalSocket;
+    }
+
+    // 检查连接状态
+    isConnected() {
+        const store = useAuthStore.getState();
+        return store.socketConnected;
     }
 
     joinRoom(roomId) {
-        if (!this.socket || this.connectionStatus !== 'connected') {
+        const socket = this.getSocket();
+        if (!socket || !this.isConnected()) {
             console.error('Socket is not connected');
             return Promise.reject(new Error('Socket is not connected'));
         }
 
         return new Promise((resolve, reject) => {
-            this.socket.emit('join', { roomId }, (response) => {
+            socket.emit('join', { roomId }, (response) => {
                 if (response.success) {
                     console.log('Joined room:', roomId);
                     resolve(response);
@@ -117,13 +60,14 @@ class WebSocketClient {
     }
 
     leaveRoom(roomId) {
-        if (!this.socket || this.connectionStatus !== 'connected') {
+        const socket = this.getSocket();
+        if (!socket || !this.isConnected()) {
             console.error('Socket is not connected');
             return Promise.reject(new Error('Socket is not connected'));
         }
 
         return new Promise((resolve, reject) => {
-            this.socket.emit('leave', { roomId }, (response) => {
+            socket.emit('leave', { roomId }, (response) => {
                 if (response.success) {
                     console.log('Left room:', roomId);
                     resolve(response);
@@ -136,20 +80,31 @@ class WebSocketClient {
     }
 
     sendMessage(message) {
-        if (!this.socket || this.connectionStatus !== 'connected') {
+        const socket = this.getSocket();
+        if (!socket || !this.isConnected()) {
             console.error('Socket is not connected');
             return Promise.reject(new Error('Socket is not connected'));
         }
 
         return new Promise((resolve, reject) => {
+            const authUser = useAuthStore.getState().authUser;
+            if (!authUser) {
+                console.error('No authenticated user found');
+                reject(new Error('No authenticated user found'));
+                return;
+            }
+
             const messageWithTimestamp = {
                 ...message,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                senderId: authUser.id,
+                senderName: authUser.name || authUser.email
             };
             
-            this.socket.emit('message', messageWithTimestamp, (response) => {
-                if (response.success) {
-                    console.log('Message sent successfully:', messageWithTimestamp);
+            console.log('Sending chat message:', messageWithTimestamp);
+            socket.emit('chatMessage', messageWithTimestamp, (response) => {
+                if (response?.success) {
+                    console.log('Message sent successfully:', response);
                     resolve({
                         ...response,
                         message: {
@@ -160,31 +115,51 @@ class WebSocketClient {
                         }
                     });
                 } else {
-                    console.error('Failed to send message:', response.error);
-                    reject(new Error(response.error || 'Failed to send message'));
+                    const error = response?.error || 'Unknown error';
+                    console.error('Failed to send message:', error);
+                    reject(new Error(error));
                 }
             });
         });
     }
 
     addMessageHandler(handler) {
+        const socket = this.getSocket();
+        if (socket) {
+            // 移除之前的监听器
+            socket.off('chatMessage');
+            
+            // 添加新的消息监听器
+            socket.on('chatMessage', (message) => {
+                console.log('Received chat message:', message);
+                try {
+                    const formattedMessage = {
+                        ...message,
+                        _id: message.messageId || message._id,
+                        createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
+                        timestamp: message.timestamp || Date.now(),
+                        // 确保发送者信息存在
+                        sender: message.sender || {
+                            id: message.senderId,
+                            name: message.senderName
+                        }
+                    };
+                    console.log('Formatted message:', formattedMessage);
+                    handler(formattedMessage);
+                } catch (error) {
+                    console.error('Error processing message:', error, message);
+                }
+            });
+        }
         this.messageHandlers.add(handler);
     }
 
     removeMessageHandler(handler) {
-        this.messageHandlers.delete(handler);
-    }
-
-    disconnect() {
-        if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
-            this.connectionStatus = 'disconnected';
+        const socket = this.getSocket();
+        if (socket) {
+            socket.off('message', handler);
         }
-    }
-
-    getConnectionStatus() {
-        return this.connectionStatus;
+        this.messageHandlers.delete(handler);
     }
 }
 

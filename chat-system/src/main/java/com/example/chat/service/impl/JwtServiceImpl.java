@@ -9,12 +9,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import lombok.extern.slf4j.Slf4j;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import javax.crypto.SecretKey;
 import javax.annotation.PostConstruct;
+import java.util.Base64;
 
 @Slf4j
 @Service
@@ -30,7 +30,15 @@ public class JwtServiceImpl implements JwtService {
     
     @PostConstruct
     public void init() {
-        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        try {
+            // 解码Base64编码的密钥
+            byte[] decodedKey = Base64.getDecoder().decode(secret);
+            this.key = Keys.hmacShaKeyFor(decodedKey);
+            log.info("JWT key initialized successfully");
+        } catch (Exception e) {
+            log.error("Failed to initialize JWT key", e);
+            throw new RuntimeException("Failed to initialize JWT key", e);
+        }
     }
     
     @Override
@@ -46,7 +54,7 @@ public class JwtServiceImpl implements JwtService {
                 .setClaims(claims)
                 .setSubject(userId)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + expiration * 1000))
+                .setExpiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(key)
                 .compact();
     }
@@ -66,8 +74,10 @@ public class JwtServiceImpl implements JwtService {
             
             return claims.get("userId", String.class);
         } catch (ExpiredJwtException e) {
+            log.warn("Token expired: {}", e.getMessage());
             return null;
         } catch (Exception e) {
+            log.error("Token validation failed: {}", e.getMessage());
             return null;
         }
     }
@@ -87,6 +97,7 @@ public class JwtServiceImpl implements JwtService {
 
             return claims.get("userId", String.class);
         } catch (Exception e) {
+            log.error("Failed to get user ID from token: {}", e.getMessage());
             return null;
         }
     }
@@ -102,6 +113,7 @@ public class JwtServiceImpl implements JwtService {
 
             return claims.getExpiration();
         } catch (Exception e) {
+            log.error("Failed to get expiration date from token: {}", e.getMessage());
             return null;
         }
     }

@@ -8,13 +8,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.Map;
+import java.util.HashMap;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:19096"}, allowCredentials = "true")
 @RequiredArgsConstructor
 public class AuthController {
     
@@ -104,22 +106,67 @@ public class AuthController {
     
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> credentials) {
-        String username = credentials.get("username");
+        log.debug("Login attempt with credentials: {}", credentials);
+        String email = credentials.get("email");
         String password = credentials.get("password");
         
-        // 使用login方法获取用户对象
-        User user = userService.login(username, password);
+        if (email == null || password == null) {
+            log.debug("Missing email or password");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "邮箱和密码不能为空"));
+        }
+        
+        // 使用email登录
+        User user = userService.login(email, password);
         if (user == null) {
+            log.debug("Invalid credentials for email: {}", email);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Invalid credentials"));
+                    .body(Map.of("error", "邮箱或密码错误"));
         }
         
         String token = jwtService.generateToken(user.getId());
+        log.debug("Login successful for user: {}", user.getId());
         
         return ResponseEntity.ok(Map.of(
                 "user", user,
                 "token", token
         ));
+    }
+    
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest request) {
+        try {
+            // 获取token
+            String token = extractToken(request);
+            if (token != null) {
+                // 从token中获取用户ID
+                String userId = userService.validateToken(token);
+                if (userId != null) {
+                    // 更新用户在线状态
+                    User user = userService.getUserById(userId);
+                    if (user != null) {
+                        user.setOnline(false);
+                        userService.updateUser(user);
+                        log.info("User {} logged out successfully", userId);
+                    }
+                }
+            }
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("Logout failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new HashMap<String, String>() {{
+                        put("error", "登出失败");
+                    }});
+        }
+    }
+
+    private String extractToken(HttpServletRequest request) {
+        String bearerToken = request.getHeader("Authorization");
+        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+            return bearerToken.substring(7);
+        }
+        return null;
     }
 }
 

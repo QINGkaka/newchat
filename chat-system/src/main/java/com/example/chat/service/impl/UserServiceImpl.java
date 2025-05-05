@@ -12,11 +12,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.crypto.SecretKey;
+import java.util.Base64;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -114,8 +114,9 @@ public class UserServiceImpl implements UserService {
         }
         
         try {
-            // 尝试解析JWT格式的token
-            SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+            // 解码Base64编码的密钥
+            byte[] decodedKey = Base64.getDecoder().decode(jwtSecret);
+            SecretKey key = Keys.hmacShaKeyFor(decodedKey);
             
             Claims claims = Jwts.parserBuilder()
                 .setSigningKey(key)
@@ -148,13 +149,16 @@ public class UserServiceImpl implements UserService {
     }
     
     @Override
-    public User login(String username, String password) {
-        User user = getUserByUsername(username);
+    public User login(String email, String password) {
+        log.debug("Login attempt for email: {}", email);
+        User user = getUserByEmail(email);
         if (user != null && user.getPassword().equals(password)) {
             user.setOnline(true);
             updateUser(user);
+            log.debug("Login successful for user: {}", user.getId());
             return user;
         }
+        log.debug("Login failed for email: {}", email);
         return null;
     }
     
@@ -166,6 +170,7 @@ public class UserServiceImpl implements UserService {
             .username("user1")
             .fullName("User One")
             .email("user1@example.com")
+            .password("Test123456")
             .online(false)
             .build();
         
@@ -174,6 +179,7 @@ public class UserServiceImpl implements UserService {
             .username("user2")
             .fullName("User Two")
             .email("user2@example.com")
+            .password("Test123456")
             .online(false)
             .build();
         
