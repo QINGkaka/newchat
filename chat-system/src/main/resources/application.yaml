@@ -1,0 +1,83 @@
+server:
+  port: 19098
+  
+websocket:
+  port: 19097
+  path: /ws
+
+socketio:
+  host: 0.0.0.0
+  port: 19099
+  bossCount: 1
+  workCount: 100
+  allowCustomRequests: true
+  upgradeTimeout: 10000
+  pingTimeout: 60000
+  pingInterval: 25000
+
+spring:
+  mvc:
+    cors:
+      allowed-origins: http://localhost:5173
+      allowed-methods: GET,POST,PUT,DELETE,OPTIONS,HEAD
+      allowed-headers: Content-Type,Accept,Authorization,Origin,X-Requested-With
+      exposed-headers: Authorization,Content-Type
+      allow-credentials: true
+      max-age: 3600
+  application:
+    name: chat-system
+  redis:
+    host: localhost
+    port: 6379
+    password: 
+    database: 0
+    timeout: 10000
+    lettuce:
+      pool:
+        max-active: 8
+        max-wait: -1
+        max-idle: 8
+        min-idle: 0
+
+chat:
+  heartbeat:
+    reader-idle-time: 60
+    writer-idle-time: 0
+    all-idle-time: 0
+  thread-pool:
+    core-size: 4
+    max-size: 8
+    queue-capacity: 1000
+    keep-alive-seconds: 60
+  server:
+    websocket:
+      port: 19097
+    socketio:
+      port: 19099
+    client:
+      enabled: false
+      server-url: ws://localhost:19097
+      reconnect-interval: 5000
+      heartbeat-interval: 30000
+      heartbeat-timeout: 60000
+
+chat-app:
+  websocket:
+    url: ws://localhost:19099/socket.io
+    enabled: false
+  auth:
+    userId: system
+    token: system-token
+
+jwt:
+  secret: yourSecretKeyHereThatIsAtLeast32BytesLongForHS256
+  expiration: 604800  # 7天过期
+
+logging:
+  level:
+    com.example.chat: DEBUG
+    org.springframework.web: INFO
+
+
+
+
