@@ -16,7 +16,7 @@ class WebSocketClient {
         }
 
         try {
-            this.socket = io('http://localhost:19099', {
+            this.socket = io('http://localhost:19095', {
                 transports: ['websocket', 'polling'],
                 path: '/socket.io',
                 withCredentials: true,

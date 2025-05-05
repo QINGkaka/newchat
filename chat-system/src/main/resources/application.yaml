@@ -1,5 +1,5 @@
 server:
-  port: 19098
+  port: 19096
   
 websocket:
   port: 19097
@@ -7,7 +7,7 @@ websocket:
 
 socketio:
   host: 0.0.0.0
-  port: 19099
+  port: 19098
   bossCount: 1
   workCount: 100
   allowCustomRequests: true
@@ -53,7 +53,7 @@ chat:
     websocket:
       port: 19097
     socketio:
-      port: 19099
+      port: 19098
     client:
       enabled: false
       server-url: ws://localhost:19097
@@ -63,7 +63,7 @@ chat:
 
 chat-app:
   websocket:
-    url: ws://localhost:19099/socket.io
+    url: ws://localhost:19096/socket.io
     enabled: false
   auth:
     userId: system

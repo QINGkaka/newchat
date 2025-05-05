@@ -148,19 +148,13 @@ public class UserServiceImpl implements UserService {
     }
     
     @Override
-    public User login(String email, String password) {
-        // 简单的用户验证
-        if (email == null || password == null) {
-            return null;
-        }
-        
-        User user = getUserByEmail(email);
-        if (user != null && password.equals(user.getPassword())) {
+    public User login(String username, String password) {
+        User user = getUserByUsername(username);
+        if (user != null && user.getPassword().equals(password)) {
             user.setOnline(true);
             updateUser(user);
             return user;
         }
-        
         return null;
     }
     

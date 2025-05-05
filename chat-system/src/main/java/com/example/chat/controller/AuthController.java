@@ -55,7 +55,7 @@ public class AuthController {
         }
     }
     
-    @PostMapping("/signup")
+    @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody Map<String, String> userData) {
         try {
             String email = userData.get("email");
@@ -104,11 +104,11 @@ public class AuthController {
     
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> credentials) {
-        String email = credentials.get("email");
+        String username = credentials.get("username");
         String password = credentials.get("password");
         
         // 使用login方法获取用户对象
-        User user = userService.login(email, password);
+        User user = userService.login(username, password);
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Invalid credentials"));
