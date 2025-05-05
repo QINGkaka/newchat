@@ -1,4 +1,4 @@
-import { useAuthStore } from '../store/useAuthStore';
+import { useAuthStore, globalSocket } from '../store/useAuthStore';
 
 class WebSocketClient {
     constructor() {
@@ -8,6 +8,7 @@ class WebSocketClient {
     // 添加connect方法
     connect() {
         const store = useAuthStore.getState();
+        console.log('store is: ', store);
         if (!store.socketConnected) {
             store.connectSocket();
         }
@@ -29,8 +30,9 @@ class WebSocketClient {
 
     // 获取全局 socket 实例
     getSocket() {
-        const store = useAuthStore.getState();
-        return store.globalSocket;
+        // const store = useAuthStore.getState();
+        // return store.globalSocket;
+        return globalSocket;
     }
 
     // 检查连接状态
@@ -102,7 +104,7 @@ class WebSocketClient {
             };
             
             console.log('Sending chat message:', messageWithTimestamp);
-            socket.emit('chatMessage', messageWithTimestamp, (response) => {
+            socket.emit('sendMessage', messageWithTimestamp, (response) => {
                 if (response?.success) {
                     console.log('Message sent successfully:', response);
                     resolve({

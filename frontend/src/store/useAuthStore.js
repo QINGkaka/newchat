@@ -6,7 +6,7 @@ import io from "socket.io-client";
 const BASE_URL = 'http://localhost:19098';
 
 // 全局 socket 实例
-let globalSocket = null;
+export let globalSocket = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -92,7 +92,7 @@ export const useAuthStore = create((set, get) => ({
     // 连接 WebSocket
     connectSocket() {
         const { authUser, isConnecting } = get();
-        
+        console.log('authUser is: ', authUser);
         if (!authUser?.token || isConnecting || globalSocket?.connected) {
             console.log('Socket connection skipped:', {
                 hasToken: !!authUser?.token,

@@ -359,6 +359,7 @@ public class SocketIOAdapter {
             ackRequest.sendAckData(response);
             log.info("Sent ack response for message: {}", message.getId());
         }
+
     }
     
     // 处理获取在线用户请求
@@ -564,7 +565,7 @@ public class SocketIOAdapter {
     // 将用户对象转换为客户端期望的格式
     private Map<String, Object> convertUserToClientFormat(User user) {
         Map<String, Object> result = new HashMap<>();
-        result.put("_id", user.getId());
+        result.put("id", user.getId());
         result.put("fullName", user.getFullName());
         result.put("username", user.getUsername());
         result.put("email", user.getEmail());

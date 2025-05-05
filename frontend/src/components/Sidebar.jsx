@@ -9,6 +9,7 @@ const Sidebar = () => {
   const { getUsers, users, selectedUser, setSelectedUser, isUsersLoading } = useChatStore();
 
   const { onlineUsers } = useAuthStore();
+  console.log("***onlineUsers: ", onlineUsers)
   const [showOnlineOnly, setShowOnlineOnly] = useState(false);
 
   useEffect(() => {
@@ -18,6 +19,7 @@ const Sidebar = () => {
   const filteredUsers = showOnlineOnly
       ? users.filter((user) => onlineUsers.includes(user._id))
       : users;
+  console.log("***filteredUsers: ", filteredUsers);
 
   if (isUsersLoading) return <SidebarSkeleton />;
 

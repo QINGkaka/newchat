@@ -82,7 +82,8 @@ export const useChatStore = create((set, get) => ({
 
         const socket = useAuthStore.getState().socket;
 
-        socket.on("newMessage", (newMessage) => {
+        // 将newMessage改为sendMessage
+        socket.on("sendMessage", (newMessage) => {
             const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
             if (!isMessageSentFromSelectedUser) return;
 
@@ -96,7 +97,7 @@ export const useChatStore = create((set, get) => ({
     // 取消订阅，如登出等
     unsubscribeFromMessages: () => {
         const socket = useAuthStore.getState().socket;
-        socket.off("newMessage");
+        socket.off("sendMessage");
     },
 
     setSelectedUser: (selectedUser) => {

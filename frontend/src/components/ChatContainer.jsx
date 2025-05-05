@@ -22,14 +22,15 @@ const ChatContainer = () => {
     const messageEndRef = useRef(null);
 
     useEffect(() => {
-        if (!selectedUser?._id) return;
+        console.log("*** selectedUser is: ", selectedUser);
+        if (!selectedUser?.id) return;
 
-        getMessages(selectedUser._id);
+        getMessages(selectedUser.id);
         
         // 检查 WebSocket 连接状态
         if (wsClient.getConnectionStatus() === 'connected') {
             // 加入聊天室
-            wsClient.joinRoom(selectedUser._id).catch(error => {
+            wsClient.joinRoom(selectedUser.id).catch(error => {
                 console.error('Failed to join room:', error);
                 toast.error('加入聊天室失败');
             });
@@ -79,11 +80,11 @@ const ChatContainer = () => {
 
         const message = {
             type: 'message',
-            roomId: selectedUser._id,
+            roomId: selectedUser.id,
             text: text,
             image: image,
             senderId: authUser._id,
-            receiverId: selectedUser._id,
+            receiverId: selectedUser.id,
             timestamp: Date.now()
         };
 

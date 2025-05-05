@@ -13,6 +13,7 @@ function HomePage() {
         try {
             // 连接WebSocket
             wsClient.connect();
+            console.log("*** wsClient is: ", wsClient);
 
             // 添加消息处理器
             const messageHandler = (message) => {
