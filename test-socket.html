@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.IO 测试</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .input-group { margin: 10px 0; }
+        .input-group label { display: inline-block; width: 100px; }
+        .input-group input { width: 300px; padding: 5px; }
+        button { margin: 5px; padding: 5px 10px; }
+        #messages { margin-top: 20px; border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; }
+        .message { margin: 5px 0; padding: 5px; border-bottom: 1px solid #eee; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Socket.IO 连接测试</h1>
+        
+        <div class="input-group">
+            <label>Token:</label>
+            <input type="text" id="token" placeholder="输入你的 JWT token">
+        </div>
+        
+        <div class="input-group">
+            <label>服务器:</label>
+            <input type="text" id="serverUrl" value="http://localhost:19098">
+        </div>
+        
+        <div id="status">未连接</div>
+        <button onclick="connect()">连接</button>
+        <button onclick="disconnect()">断开</button>
+        <button onclick="testMessage()">发送测试消息</button>
+        
+        <div id="messages"></div>
+    </div>
+
+    <script>
+        let socket = null;
+
+        function connect() {
+            const token = document.getElementById('token').value;
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            if (!token) {
+                addMessage('请输入 token', 'error');
+                return;
+            }
+
+            try {
+                socket = io(serverUrl, {
+                    transports: ['websocket', 'polling'],
+                    path: '/socket.io',
+                    withCredentials: true,
+                    query: {
+                        token: token
+                    },
+                    extraHeaders: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                socket.on('connect', () => {
+                    document.getElementById('status').textContent = '已连接';
+                    document.getElementById('status').className = 'success';
+                    addMessage('连接成功', 'success');
+                });
+
+                socket.on('disconnect', () => {
+                    document.getElementById('status').textContent = '已断开';
+                    document.getElementById('status').className = '';
+                    addMessage('连接断开', 'error');
+                });
+
+                socket.on('connect_error', (error) => {
+                    addMessage('连接错误: ' + error.message, 'error');
+                });
+
+                socket.on('error', (error) => {
+                    addMessage('错误: ' + error, 'error');
+                });
+
+                socket.on('message', (message) => {
+                    addMessage('收到消息: ' + JSON.stringify(message));
+                });
+
+            } catch (error) {
+                addMessage('初始化错误: ' + error.message, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+
+        function testMessage() {
+            if (!socket || !socket.connected) {
+                addMessage('请先连接', 'error');
+                return;
+            }
+
+            const testMessage = {
+                content: '测试消息 ' + new Date().toLocaleTimeString(),
+                type: 'text'
+            };
+
+            console.log('Sending test message:', testMessage);
+            socket.emit('sendMessage', testMessage, (response) => {
+                console.log('Message sent, response:', response);
+                addMessage('消息已发送: ' + JSON.stringify(response));
+            });
+        }
+
+        function addMessage(text, type = '') {
+            const messages = document.getElementById('messages');
+            const message = document.createElement('div');
+            message.className = 'message ' + type;
+            message.textContent = text;
+            messages.appendChild(message);
+            messages.scrollTop = messages.scrollHeight;
+        }
+    </script>
+</body>
+</html> 
