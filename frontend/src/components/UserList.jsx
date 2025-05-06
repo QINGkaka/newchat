@@ -1,55 +1,85 @@
 import { useChatStore } from "../store/useChatStore";
 import { useAuthStore } from "../store/useAuthStore";
+import { useEffect, useMemo, useCallback } from "react";
+import { globalSocket } from "../store/useAuthStore";
+import './UserList.css';
 
 const UserList = () => {
     const { users, selectedUser, setSelectedUser } = useChatStore();
-    const { onlineUsers, authUser } = useAuthStore();
+    const { onlineUsers, authUser, socketConnected } = useAuthStore();
+    const { updateOnlineStatus } = useChatStore();
 
-    const isUserOnline = (user) => {
-        console.log('Checking online status for user:', user);
-        console.log('Current online users:', onlineUsers);
+    useEffect(() => {
+        // 当WebSocket连接建立时，请求更新在线用户列表
+        if (socketConnected && globalSocket) {
+            console.log('WebSocket connected, requesting online users update');
+            globalSocket.emit('getOnlineUsers');
+        }
+    }, [socketConnected]);
+
+    // 使用useCallback优化isUserOnline函数
+    const isUserOnline = useCallback((user) => {
+        if (!user) return false;
         
-        // 如果是当前用户
-        if (user.id === authUser.id) {
-            console.log('This is the current user');
-            return authUser.online;
+        // 如果是当前用户且WebSocket已连接，则显示为在线
+        if (user.id === authUser?.id) {
+            return socketConnected;
         }
         
-        // 检查用户是否在在线列表中
+        // 查找用户在在线列表中的状态
         const onlineUser = onlineUsers.find(u => u.id === user.id);
-        console.log('Found online user:', onlineUser);
-        return onlineUser?.online || false;
-    };
+        const isOnline = onlineUser?.online === true;
+        
+        // 更新在线状态缓存
+        updateOnlineStatus(user.id, isOnline);
+        
+        return isOnline;
+    }, [onlineUsers, socketConnected, authUser]);
 
-    return (
-        <div className="flex flex-col h-full">
-            <div className="flex-1 overflow-y-auto">
-                {users.map((user) => (
-                    <div
-                        key={user.id}
-                        onClick={() => setSelectedUser(user)}
-                        className={`flex items-center gap-4 p-4 cursor-pointer hover:bg-gray-100 ${
-                            selectedUser?.id === user.id ? "bg-gray-100" : ""
-                        }`}
-                    >
-                        <div className="relative">
-                            <img
-                                src={user.profilePicture || "/avatar.png"}
-                                alt="profile pic"
-                                className="size-12 rounded-full"
-                            />
-                            <div
-                                className={`absolute bottom-0 right-0 size-3 rounded-full border-2 border-white ${
-                                    isUserOnline(user) ? "bg-green-500" : "bg-gray-400"
-                                }`}
-                            />
-                        </div>
-                        <div className="flex-1">
-                            <h3 className="font-semibold">{user.fullName}</h3>
-                            <p className="text-sm text-gray-500">{user.email}</p>
+    // 使用useMemo优化在线用户列表
+    const onlineUsersList = useMemo(() => {
+        return users.filter(user => isUserOnline(user));
+    }, [users, isUserOnline]);
+
+    // 计算真实在线用户数量
+    const onlineCount = useMemo(() => {
+        return onlineUsersList.length;
+    }, [onlineUsersList]);
+
+    // 使用useMemo优化用户列表渲染
+    const userListItems = useMemo(() => {
+        return users.map(user => {
+            const isOnline = isUserOnline(user);
+            return (
+                <div
+                    key={user.id}
+                    className={`user-item ${selectedUser?.id === user.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedUser(user)}
+                >
+                    <div className="user-info">
+                        <span className="username">{user.username}</span>
+                        <div className="user-status">
+                            <span className={`status-indicator ${isOnline ? 'online' : 'offline'}`} />
+                            <span className="status-text">
+                                {isOnline ? '在线' : '离线'}
+                            </span>
                         </div>
                     </div>
-                ))}
+                </div>
+            );
+        });
+    }, [users, selectedUser, isUserOnline, setSelectedUser]);
+
+    return (
+        <div className="user-list-container">
+            <div className="user-list-header">
+                <h2>联系人</h2>
+                <div className="online-count">
+                    {onlineCount} 位用户在线
+                </div>
+            </div>
+            <div className="user-list">
+                {userListItems}
             </div>
         </div>
     );

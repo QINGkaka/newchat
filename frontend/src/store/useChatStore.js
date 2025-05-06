@@ -9,6 +9,18 @@ export const useChatStore = create((set, get) => ({
     selectedUser: null,
     isUsersLoading: false,
     isMessagesLoading: false,
+    onlineStatusCache: new Map(),
+
+    updateOnlineStatus: (userId, status) => {
+        set(state => {
+            const newCache = new Map(state.onlineStatusCache);
+            newCache.set(userId, {
+                status,
+                lastUpdated: Date.now()
+            });
+            return { onlineStatusCache: newCache };
+        });
+    },
 
     getUsers: async () => {
         set({ isUsersLoading: true });
@@ -17,6 +29,15 @@ export const useChatStore = create((set, get) => ({
             const res = await axiosInstance.get("/api/messages/users");
             console.log('Users response:', res.data);
             set({ users: res.data });
+            // 初始化在线状态缓存
+            const newCache = new Map();
+            res.data.forEach(user => {
+                newCache.set(user.id, {
+                    status: false,
+                    lastUpdated: Date.now()
+                });
+            });
+            set({ onlineStatusCache: newCache });
         } catch (error) {
             console.error('Error fetching users:', error);
             if (error.response) {
@@ -35,16 +56,19 @@ export const useChatStore = create((set, get) => ({
     },
 
     getMessages: async (userId) => {
-        set({ isMessagesLoading: true });
         try {
-            const res = await axiosInstance.get(`/api/messages/${userId}`);
-            console.log('Messages response:', res.data);
-            set({ messages: res.data });
+            const response = await axiosInstance.get(`/api/messages/${userId}`);
+            // 确保消息按时间戳升序排序
+            const sortedMessages = response.data.sort((a, b) => {
+                const timestampA = a.timestamp || new Date(a.createdAt).getTime();
+                const timestampB = b.timestamp || new Date(b.createdAt).getTime();
+                return timestampA - timestampB;
+            });
+            set({ messages: sortedMessages, isMessagesLoading: false });
         } catch (error) {
             console.error('Error fetching messages:', error);
-            toast.error(error.response?.data?.message || '获取消息失败');
-        } finally {
             set({ isMessagesLoading: false });
+            toast.error('获取消息历史失败');
         }
     },
 
@@ -62,11 +86,24 @@ export const useChatStore = create((set, get) => ({
 
             if (!messageExists) {
                 console.log('Message does not exist, adding to store:', message);
-                return {
-                    messages: [...state.messages, message].sort((a, b) => 
-                        (a.timestamp || a.createdAt) - (b.timestamp || b.createdAt)
-                    )
+                // 确保所有消息都有时间戳
+                const messageWithTimestamp = {
+                    ...message,
+                    timestamp: message.timestamp || Date.now(),
+                    createdAt: message.createdAt || new Date(message.timestamp || Date.now()).toISOString()
                 };
+                
+                // 使用插入排序优化性能
+                const messages = [...state.messages];
+                let insertIndex = messages.length;
+                while (insertIndex > 0 && 
+                       (messages[insertIndex - 1].timestamp || new Date(messages[insertIndex - 1].createdAt).getTime()) > 
+                       (messageWithTimestamp.timestamp || new Date(messageWithTimestamp.createdAt).getTime())) {
+                    insertIndex--;
+                }
+                messages.splice(insertIndex, 0, messageWithTimestamp);
+                
+                return { messages };
             }
             return state;
         });

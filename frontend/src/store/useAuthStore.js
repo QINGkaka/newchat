@@ -54,45 +54,51 @@ export const useAuthStore = create((set, get) => ({
         if (heartbeatTimer) {
             clearInterval(heartbeatTimer);
         }
+        
+        // 每30秒发送一次心跳
         heartbeatTimer = setInterval(() => {
             if (globalSocket?.connected) {
-                globalSocket.emit('heartbeat', null, (response) => {
-                    if (!response?.success) {
-                        console.warn('Heartbeat failed, reconnecting...');
-                        get().reconnectSocket();
-                    }
-                });
+                console.log('Sending heartbeat ping...');
+                globalSocket.emit('ping');
+            } else {
+                console.warn('Socket not connected, skipping heartbeat');
+                get().reconnectSocket();
             }
         }, HEARTBEAT_INTERVAL);
     },
 
     // 重连逻辑
     async reconnectSocket() {
-        const {reconnectAttempts} = get();
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            console.error('Max reconnection attempts reached');
-            get().cleanup();
+        const { isConnecting, reconnectAttempts } = get();
+        
+        if (isConnecting || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                console.error('Max reconnection attempts reached');
+                get().cleanup();
+            }
             return;
         }
 
-        set(state => ({ 
-            reconnectAttempts: state.reconnectAttempts + 1,
-            isConnecting: true 
-        }));
-
+        console.log(`Attempting to reconnect... (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+        
         if (reconnectTimer) {
             clearTimeout(reconnectTimer);
         }
 
+        set(state => ({ 
+            isConnecting: true,
+            reconnectAttempts: state.reconnectAttempts + 1
+        }));
+
         reconnectTimer = setTimeout(() => {
             get().connectSocket();
-        }, RECONNECT_DELAY * (reconnectAttempts + 1));
+        }, RECONNECT_DELAY * Math.pow(2, reconnectAttempts)); // 指数退避
     },
 
     // 连接 WebSocket
     connectSocket() {
         const { authUser, isConnecting } = get();
-        console.log('authUser is: ', authUser);
+        console.log('Connecting socket for user:', authUser?.username);
         if (!authUser?.token || isConnecting || globalSocket?.connected) {
             console.log('Socket connection skipped:', {
                 hasToken: !!authUser?.token,
@@ -133,44 +139,13 @@ export const useAuthStore = create((set, get) => ({
             // 添加用户状态更新处理
             globalSocket.on('userStatus', (data) => {
                 console.log('Received user status update:', data);
-                set(state => {
-                    const updatedUsers = state.onlineUsers.map(user => {
-                        if (user.id === data.userId) {
-                            console.log(`Updating user ${user.id} online status to ${data.online}`);
-                            return { ...user, online: data.online };
-                        }
-                        return user;
-                    });
-                    
-                    // 如果用户不在列表中，立即请求完整的用户列表
-                    if (!updatedUsers.some(user => user.id === data.userId)) {
-                        console.log('User not in list, requesting full update...');
-                        globalSocket.emit('getOnlineUsers');
-                    }
-                    
-                    return { ...state, onlineUsers: updatedUsers };
-                });
+                const { userId, online, lastUpdate } = data;
+                get().updateUserStatus(userId, online, lastUpdate);
             });
 
             globalSocket.on('onlineUsers', (users) => {
                 console.log('Received online users list:', users);
-                set(state => {
-                    // 保留现有用户的状态
-                    const currentUsers = new Map(
-                        state.onlineUsers.map(user => [user.id, user])
-                    );
-                    
-                    const updatedUsers = users.map(user => ({
-                        ...user,
-                        online: user.online ?? currentUsers.get(user.id)?.online ?? false
-                    }));
-
-                    console.log('Updated online users:', updatedUsers);
-                    return { ...state, onlineUsers: updatedUsers };
-                });
-                
-                // 立即发送心跳以更新状态
-                globalSocket.emit('ping');
+                get().updateOnlineUsers(users);
             });
 
             // 添加重连成功后的处理
@@ -375,5 +350,56 @@ export const useAuthStore = create((set, get) => ({
         if (socket) {
             socket.off("userStatus");
         }
+    },
+
+    // 更新在线用户列表
+    updateOnlineUsers(users) {
+        console.log('Updating online users:', users);
+        set(state => {
+            // 确保每个用户都有必要的字段
+            const updatedUsers = users.map(user => ({
+                id: user.id,
+                username: user.username,
+                online: user.online === true,
+                lastUpdate: user.lastUpdate || Date.now()
+            }));
+
+            console.log('Updated online users with status:', updatedUsers.map(u => ({
+                username: u.username,
+                online: u.online
+            })));
+            return { onlineUsers: updatedUsers };
+        });
+    },
+
+    // 更新单个用户状态
+    updateUserStatus(userId, isOnline, lastUpdate) {
+        console.log(`Updating user ${userId} status to ${isOnline}`);
+        set(state => {
+            const userExists = state.onlineUsers.some(user => user.id === userId);
+            
+            if (!userExists && globalSocket?.connected) {
+                console.log('User not in list, requesting full update...');
+                globalSocket.emit('getOnlineUsers');
+                return state;
+            }
+
+            const updatedUsers = state.onlineUsers.map(user => 
+                user.id === userId 
+                    ? {
+                        ...user,
+                        online: isOnline === true,
+                        lastUpdate: lastUpdate || Date.now()
+                    }
+                    : user
+            );
+
+            console.log('Updated users after status change:', updatedUsers.map(u => ({
+                username: u.username,
+                online: u.online
+            })));
+
+            return { ...state, onlineUsers: updatedUsers };
+        });
     }
 }));

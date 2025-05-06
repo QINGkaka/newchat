@@ -1,5 +1,5 @@
 import { useChatStore } from "../store/useChatStore";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import wsClient from "../lib/websocket";
 import { toast } from "react-hot-toast";
 
@@ -106,13 +106,28 @@ const ChatContainer = () => {
             
             // 使用服务器返回的消息ID和时间戳
             if (response.message) {
-                addMessage(response.message);
+                const formattedMessage = {
+                    ...response.message,
+                    _id: response.message.messageId || response.message._id,
+                    timestamp: response.message.timestamp || Date.now(),
+                    createdAt: response.message.createdAt || new Date().toISOString()
+                };
+                addMessage(formattedMessage);
             }
         } catch (error) {
             console.error('Failed to send message:', error);
             toast.error('发送消息失败');
         }
     };
+
+    // 对消息进行排序
+    const sortedMessages = useMemo(() => {
+        return [...messages].sort((a, b) => {
+            const timestampA = a.timestamp || new Date(a.createdAt).getTime();
+            const timestampB = b.timestamp || new Date(b.createdAt).getTime();
+            return timestampA - timestampB;
+        });
+    }, [messages]);
 
     if (isMessagesLoading) {
         return (
@@ -129,42 +144,45 @@ const ChatContainer = () => {
             <ChatHeader />
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.map((message) => (
-                    <div
-                        key={message._id || message.messageId}
-                        className={`chat ${message.senderId === authUser.id ? "chat-end" : "chat-start"}`}
-                    >
-                        <div className="chat-image avatar">
-                            <div className="size-10 rounded-full border">
-                                <img
-                                    src={
-                                        message.senderId === authUser.id
-                                            ? authUser.profilePic || "/avatar.png"
-                                            : selectedUser.profilePic || "/avatar.png"
-                                    }
-                                    alt="profile pic"
-                                />
+                {sortedMessages.map((message) => {
+                    const messageId = message._id || message.messageId || `${message.senderId}-${message.timestamp}`;
+                    return (
+                        <div
+                            key={messageId}
+                            className={`chat ${message.senderId === authUser.id ? "chat-end" : "chat-start"}`}
+                        >
+                            <div className="chat-image avatar">
+                                <div className="size-10 rounded-full border">
+                                    <img
+                                        src={
+                                            message.senderId === authUser.id
+                                                ? authUser.profilePic || "/avatar.png"
+                                                : selectedUser.profilePic || "/avatar.png"
+                                        }
+                                        alt="profile pic"
+                                    />
+                                </div>
+                            </div>
+                            <div className="chat-header mb-1">
+                                <time className="text-xs opacity-50 ml-1">
+                                    {formatMessageTime(message.timestamp || message.createdAt)}
+                                </time>
+                            </div>
+                            <div className="chat-bubble flex flex-col">
+                                {message.image && (
+                                    <img
+                                        src={message.image}
+                                        alt="Attachment"
+                                        className="sm:max-w-[200px] rounded-md mb-2"
+                                    />
+                                )}
+                                {(message.content || message.text) && (
+                                    <p>{message.content || message.text}</p>
+                                )}
                             </div>
                         </div>
-                        <div className="chat-header mb-1">
-                            <time className="text-xs opacity-50 ml-1">
-                                {formatMessageTime(message.timestamp || message.createdAt)}
-                            </time>
-                        </div>
-                        <div className="chat-bubble flex flex-col">
-                            {message.image && (
-                                <img
-                                    src={message.image}
-                                    alt="Attachment"
-                                    className="sm:max-w-[200px] rounded-md mb-2"
-                                />
-                            )}
-                            {(message.content || message.text) && (
-                                <p>{message.content || message.text}</p>
-                            )}
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
                 <div ref={messageEndRef} />
             </div>
 
