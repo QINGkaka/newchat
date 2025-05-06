@@ -127,12 +127,13 @@ class WebSocketClient {
 
     addMessageHandler(handler) {
         const socket = this.getSocket();
+        console.log('socket is: ', socket);
         if (socket) {
             // 移除之前的监听器
-            socket.off('chatMessage');
+            // socket.off('sendMessage');
             
             // 添加新的消息监听器
-            socket.on('chatMessage', (message) => {
+            socket.on('newMessage', (message) => {
                 console.log('Received chat message:', message);
                 try {
                     const formattedMessage = {

@@ -80,7 +80,7 @@ const ChatContainer = () => {
 
         const message = {
             type: 'message',
-            roomId: selectedUser.id,
+            roomId: null,
             text: text,
             image: image,
             senderId: authUser._id,
