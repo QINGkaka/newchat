@@ -57,12 +57,26 @@ const UserList = () => {
                     onClick={() => setSelectedUser(user)}
                 >
                     <div className="user-info">
-                        <span className="username">{user.username}</span>
-                        <div className="user-status">
-                            <span className={`status-indicator ${isOnline ? 'online' : 'offline'}`} />
-                            <span className="status-text">
-                                {isOnline ? '在线' : '离线'}
-                            </span>
+                        <div className="avatar">
+                            <div className="size-10 rounded-full relative">
+                                <img 
+                                    src={user.profilePicture || "/avatar.png"} 
+                                    alt={user.username}
+                                    className="w-full h-full object-cover"
+                                />
+                                {isOnline && (
+                                    <span className="absolute bottom-0 right-0 size-2.5 bg-green-500 rounded-full ring-2 ring-zinc-900" />
+                                )}
+                            </div>
+                        </div>
+                        <div className="user-details">
+                            <span className="username">{user.username}</span>
+                            <div className="user-status">
+                                <span className={`status-indicator ${isOnline ? 'online' : 'offline'}`} />
+                                <span className="status-text">
+                                    {isOnline ? '在线' : '离线'}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>

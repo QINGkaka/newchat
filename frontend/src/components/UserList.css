@@ -1,14 +1,12 @@
 .user-list-container {
+    height: 100%;
     display: flex;
     flex-direction: column;
-    height: 100%;
-    background-color: #f5f7fb;
 }
 
 .user-list-header {
-    padding: 16px;
-    background-color: #ffffff;
-    border-bottom: 1px solid #e6e9f0;
+    padding: 1rem;
+    border-bottom: 1px solid var(--base-300);
 }
 
 .user-list-header h2 {
@@ -18,69 +16,72 @@
     margin-bottom: 8px;
 }
 
-.online-count {
-    font-size: 14px;
-    color: #666;
-}
-
 .user-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 0.5rem;
 }
 
 .user-item {
-    padding: 12px;
-    border-radius: 8px;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
     cursor: pointer;
-    transition: background-color 0.2s;
-    margin-bottom: 4px;
+    transition: all 0.2s;
 }
 
 .user-item:hover {
-    background-color: #eef2f7;
+    background-color: var(--base-200);
 }
 
 .user-item.selected {
-    background-color: #e3e9f2;
+    background-color: var(--base-300);
 }
 
 .user-info {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 0.75rem;
+}
+
+.user-details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
 }
 
 .username {
-    font-size: 15px;
-    color: #2c3e50;
     font-weight: 500;
 }
 
 .user-status {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--base-content-secondary);
 }
 
 .status-indicator {
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
-    display: inline-block;
 }
 
 .status-indicator.online {
-    background-color: #34d399;
-    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.2);
+    background-color: rgb(34 197 94);
 }
 
 .status-indicator.offline {
-    background-color: #9ca3af;
-    box-shadow: 0 0 0 2px rgba(156, 163, 175, 0.2);
+    background-color: var(--base-content-secondary);
 }
 
-.status-text {
-    font-size: 13px;
-    color: #64748b;
+.avatar {
+    flex-shrink: 0;
+}
+
+.online-count {
+    font-size: 0.875rem;
+    color: var(--base-content-secondary);
+    margin-top: 0.25rem;
 } 

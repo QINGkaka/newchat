@@ -22,7 +22,7 @@ const ChatHeader = () => {
                     {/* Avatar */}
                     <div className="avatar">
                         <div className="size-10 rounded-full relative">
-                            <img src={selectedUser?.profilePic || "/avatar.png"} alt={selectedUser?.fullName} />
+                            <img src={selectedUser?.profilePicture || "/avatar.png"} alt={selectedUser?.fullName} />
                             {isUserOnline(selectedUser) && (
                                 <span className="absolute bottom-0 right-0 size-3 bg-green-500 rounded-full ring-2 ring-zinc-900" />
                             )}
