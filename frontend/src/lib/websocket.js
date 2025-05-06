@@ -8,16 +8,30 @@ class WebSocketClient {
     // 添加connect方法
     connect() {
         const store = useAuthStore.getState();
-        console.log('store is: ', store);
-        if (!store.socketConnected) {
-            store.connectSocket();
+        console.log('Attempting to connect WebSocket...');
+        
+        // 如果已经连接，直接返回
+        if (store.socketConnected) {
+            console.log('WebSocket already connected');
+            return true;
         }
+
+        // 如果正在连接中，等待连接完成
+        if (store.isConnecting) {
+            console.log('WebSocket connection in progress');
+            return false;
+        }
+
+        // 尝试建立新连接
+        console.log('Initializing new WebSocket connection');
+        store.connectSocket();
         return store.socketConnected;
     }
 
     // 添加disconnect方法
     disconnect() {
         const store = useAuthStore.getState();
+        console.log('Disconnecting WebSocket...');
         if (store.socketConnected) {
             store.disconnectSocket();
         }
@@ -25,20 +39,20 @@ class WebSocketClient {
 
     // 获取连接状态
     getConnectionStatus() {
-        return this.isConnected() ? 'connected' : 'disconnected';
+        const store = useAuthStore.getState();
+        if (store.isConnecting) return 'connecting';
+        return store.socketConnected ? 'connected' : 'disconnected';
     }
 
     // 获取全局 socket 实例
     getSocket() {
-        // const store = useAuthStore.getState();
-        // return store.globalSocket;
         return globalSocket;
     }
 
     // 检查连接状态
     isConnected() {
         const store = useAuthStore.getState();
-        return store.socketConnected;
+        return store.socketConnected && globalSocket?.connected;
     }
 
     joinRoom(roomId) {

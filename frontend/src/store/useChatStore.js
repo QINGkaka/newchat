@@ -126,5 +126,29 @@ export const useChatStore = create((set, get) => ({
     setSelectedUser: (selectedUser) => {
         console.log('Setting selected user:', selectedUser);
         set({ selectedUser });
+    },
+
+    // 更新用户资料
+    updateUserProfile: (userId, profileData) => {
+        set(state => {
+            // 更新用户列表中的用户资料
+            const updatedUsers = state.users.map(user => {
+                if (user.id === userId) {
+                    return { ...user, ...profileData };
+                }
+                return user;
+            });
+
+            // 如果是当前选中的用户，也更新selectedUser
+            let updatedSelectedUser = state.selectedUser;
+            if (state.selectedUser?.id === userId) {
+                updatedSelectedUser = { ...state.selectedUser, ...profileData };
+            }
+
+            return {
+                users: updatedUsers,
+                selectedUser: updatedSelectedUser
+            };
+        });
     }
 }));

@@ -168,6 +168,59 @@ public class AuthController {
         }
         return null;
     }
+
+    @PutMapping("/update-profile")
+    public ResponseEntity<?> updateProfile(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, String> updateData) {
+        try {
+            if (!authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("error", "Invalid authorization header"));
+            }
+
+            String token = authHeader.substring(7);
+            String userId = jwtService.validateToken(token);
+            if (userId == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("error", "Invalid token"));
+            }
+
+            User user = userService.getUserById(userId);
+            if (user == null) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "User not found"));
+            }
+
+            // 更新头像
+            if (updateData.containsKey("profilePicture")) {
+                String profilePicture = updateData.get("profilePicture");
+                if (profilePicture != null && !profilePicture.isEmpty()) {
+                    user.setProfilePicture(profilePicture);
+                    log.info("Updating profile picture for user: {}", userId);
+                }
+            }
+
+            // 保存更新后的用户信息
+            userService.updateUser(user);
+            log.info("Successfully updated profile for user: {}", userId);
+
+            // 返回更新后的用户信息，但不包含敏感信息
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", user.getId());
+            response.put("username", user.getUsername());
+            response.put("email", user.getEmail());
+            response.put("fullName", user.getFullName());
+            response.put("profilePicture", user.getProfilePicture());
+            response.put("online", user.isOnline());
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error updating profile: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to update profile"));
+        }
+    }
 }
 
 

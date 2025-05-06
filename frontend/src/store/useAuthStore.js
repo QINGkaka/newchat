@@ -2,6 +2,7 @@ import {create} from 'zustand';
 import axiosInstance from '../lib/axios';
 import {toast} from "react-hot-toast";
 import io from "socket.io-client";
+import { useChatStore } from '../store/useChatStore';
 
 const BASE_URL = 'http://localhost:19098';
 
@@ -134,6 +135,15 @@ export const useAuthStore = create((set, get) => ({
                 // 连接后立即请求在线用户列表
                 console.log('Requesting online users list...');
                 globalSocket.emit('getOnlineUsers');
+            });
+
+            // 添加用户资料更新事件监听
+            globalSocket.on('userProfileUpdated', (data) => {
+                console.log('Received user profile update:', data);
+                const { userId, profilePicture } = data;
+                // 更新聊天用户列表中的头像
+                const { updateUserProfile } = useChatStore.getState();
+                updateUserProfile(userId, { profilePicture });
             });
 
             // 添加用户状态更新处理
@@ -307,17 +317,38 @@ export const useAuthStore = create((set, get) => ({
     async updateProfile(data) {
         set({isUpdatingProfile:true});
         try {
-            const response = await axiosInstance.put('/api/auth/update-profile',data);
+            // 将profilePic重命名为profilePicture
+            const updatedData = {
+                ...data,
+                profilePicture: data.profilePic
+            };
+            delete updatedData.profilePic;
+            
+            const response = await axiosInstance.put('/api/auth/update-profile', updatedData);
             const updatedUser = {
-                ...response.data,
+                ...get().authUser,  // 保留现有用户数据
+                ...response.data,   // 更新服务器返回的新数据
                 token: get().authUser.token
             };
+
+            // 更新本地存储
             localStorage.setItem('authUser', JSON.stringify(updatedUser));
+            
+            // 更新状态
             set({authUser: updatedUser});
-            toast('更换头像成功');
+            
+            // 通知其他用户头像已更新
+            if (globalSocket?.connected) {
+                globalSocket.emit('userProfileUpdated', {
+                    userId: updatedUser.id,
+                    profilePicture: updatedUser.profilePicture
+                });
+            }
+            
+            toast.success('个人资料更新成功');
         } catch (error) {
             console.error('Update profile error:', error);
-            toast("更换头像失败");
+            toast.error("个人资料更新失败");
         } finally {
             set({isUpdatingProfile:false})
         }

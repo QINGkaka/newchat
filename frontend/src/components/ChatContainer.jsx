@@ -27,17 +27,34 @@ const ChatContainer = () => {
 
         getMessages(selectedUser.id);
         
-        // 检查 WebSocket 连接状态
-        if (wsClient.getConnectionStatus() === 'connected') {
-            // 加入聊天室
-            wsClient.joinRoom(selectedUser.id).catch(error => {
-                console.error('Failed to join room:', error);
-                toast.error('加入聊天室失败');
-            });
-        } else {
-            console.error('WebSocket is not connected');
-            toast.error('WebSocket 连接已断开');
-        }
+        const connectAndJoinRoom = async () => {
+            try {
+                // 如果未连接，尝试连接
+                if (!wsClient.isConnected()) {
+                    console.log('WebSocket not connected, attempting to connect...');
+                    wsClient.connect();
+                }
+
+                // 等待连接建立
+                let attempts = 0;
+                const maxAttempts = 3;
+                while (!wsClient.isConnected() && attempts < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    attempts++;
+                }
+
+                // 如果连接成功，加入聊天室
+                if (wsClient.isConnected()) {
+                    await wsClient.joinRoom(selectedUser.id);
+                } else {
+                    console.error('Failed to establish WebSocket connection');
+                }
+            } catch (error) {
+                console.error('Error in connectAndJoinRoom:', error);
+            }
+        };
+
+        connectAndJoinRoom();
 
         // 添加消息处理器
         const messageHandler = (message) => {
@@ -64,13 +81,12 @@ const ChatContainer = () => {
             }
         };
 
-        // 添加消息处理器
         wsClient.addMessageHandler(messageHandler);
 
         // 清理函数
         return () => {
             wsClient.removeMessageHandler(messageHandler);
-            if (wsClient.getConnectionStatus() === 'connected') {
+            if (wsClient.isConnected()) {
                 wsClient.leaveRoom(selectedUser.id).catch(error => {
                     console.error('Failed to leave room:', error);
                 });
@@ -156,8 +172,8 @@ const ChatContainer = () => {
                                     <img
                                         src={
                                             message.senderId === authUser.id
-                                                ? authUser.profilePic || "/avatar.png"
-                                                : selectedUser.profilePic || "/avatar.png"
+                                                ? authUser.profilePicture || "/avatar.png"
+                                                : selectedUser.profilePicture || "/avatar.png"
                                         }
                                         alt="profile pic"
                                     />
