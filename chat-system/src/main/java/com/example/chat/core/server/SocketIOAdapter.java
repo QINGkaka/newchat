@@ -253,18 +253,16 @@ public class SocketIOAdapter {
         for (User user : allUsers) {
             if (!user.getId().equals(userId)) {
                 Map<String, Object> userData = convertUserToClientFormat(user);
-                // 检查用户是否真的在线（有活跃连接且最近有心跳）
-                boolean isReallyOnline = false;
+                // 只检查是否有活跃的WebSocket连接
                 Set<SocketIOClient> userClients = this.userClients.get(user.getId());
-                if (userClients != null && !userClients.isEmpty()) {
-                    for (SocketIOClient c : userClients) {
-                        Long lastPingTime = c.get("lastPingTime");
-                        if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
-                            isReallyOnline = true;
-                            break;
-                        }
-                    }
+                boolean isReallyOnline = userClients != null && !userClients.isEmpty();
+                
+                // 更新用户在线状态
+                if (user.isOnline() != isReallyOnline) {
+                    user.setOnline(isReallyOnline);
+                    userService.updateUser(user);
                 }
+                
                 userData.put("online", isReallyOnline);
                 userList.add(userData);
             }
@@ -325,16 +323,18 @@ public class SocketIOAdapter {
         String type = (String) data.get("type");
         String receiverId = (String) data.get("receiverId");
         String roomId = (String) data.get("roomId");
+        String image = (String) data.get("image");
         
-        // 创建消息对象
+        // 创建消息对象 - 保留文字内容
         ChatMessage message = ChatMessage.builder()
                 .id(UUID.randomUUID().toString())
                 .senderId(userId)
-                .content(content)
+                .content(content)  // 保留文字内容
+                .image(image)      // 设置图片
                 .receiverId(receiverId)
                 .roomId(roomId)
                 .timestamp(System.currentTimeMillis())
-                .type("image".equalsIgnoreCase(type) ? ChatMessage.MessageType.IMAGE : ChatMessage.MessageType.TEXT)
+                .type(image != null ? ChatMessage.MessageType.IMAGE : ChatMessage.MessageType.TEXT)
                 .build();
         
         // 保存消息
@@ -359,7 +359,6 @@ public class SocketIOAdapter {
             ackRequest.sendAckData(response);
             log.info("Sent ack response for message: {}", message.getId());
         }
-
     }
     
     // 处理获取在线用户请求
@@ -460,49 +459,18 @@ public class SocketIOAdapter {
             log.info("Sending message to user: {}, messageId: {}, clients: {}", userId, message.getId(), clients.size());
             
             for (SocketIOClient client : clients) {
-                // 检查客户端是否活跃
-                Long lastPingTime = client.get("lastPingTime");
-                if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
-                    try {
-                        client.sendEvent("newMessage", messageData);
-                        messageSent = true;
-                        log.debug("Message sent to client: {}", client.getSessionId());
-                    } catch (Exception e) {
-                        log.error("Failed to send message to client: {}", client.getSessionId(), e);
-                    }
+                try {
+                    client.sendEvent("newMessage", messageData);
+                    messageSent = true;
+                    log.debug("Message sent to client: {}", client.getSessionId());
+                } catch (Exception e) {
+                    log.error("Failed to send message to client: {}", client.getSessionId(), e);
                 }
             }
         }
         
         if (!messageSent) {
-            // 如果消息没有发送成功，检查用户状态
-            User user = userService.getUserById(userId);
-            if (user != null) {
-                boolean isReallyOnline = false;
-                if (clients != null) {
-                    for (SocketIOClient client : clients) {
-                        Long lastPingTime = client.get("lastPingTime");
-                        if (lastPingTime != null && System.currentTimeMillis() - lastPingTime < 30000) {
-                            isReallyOnline = true;
-                            break;
-                        }
-                    }
-                }
-                
-                // 更新用户在线状态
-                if (user.isOnline() != isReallyOnline) {
-                    user.setOnline(isReallyOnline);
-                    userService.updateUser(user);
-                    broadcastUserStatus(userId, isReallyOnline);
-                    log.info("Updated user {} online status to: {}", userId, isReallyOnline);
-                }
-                
-                if (!isReallyOnline) {
-                    log.warn("User {} is offline, message not sent: {}", userId, message.getId());
-                }
-            } else {
-                log.warn("User {} not found, message not sent: {}", userId, message.getId());
-            }
+            log.warn("Failed to send message to user: {}, messageId: {}", userId, message.getId());
         }
     }
     
@@ -520,43 +488,35 @@ public class SocketIOAdapter {
         Map<String, Object> result = new HashMap<>();
         
         // 基本字段
-        result.put("_id", message.getId());  // chat-app使用_id作为主键
+        result.put("_id", message.getId());
+        result.put("messageId", message.getId());
         result.put("senderId", message.getSenderId());
-        result.put("createdAt", new java.util.Date(message.getTimestamp())); // chat-app使用createdAt
+        result.put("receiverId", message.getReceiverId());
+        result.put("timestamp", message.getTimestamp());
+        result.put("createdAt", message.getTimestamp());
+        result.put("type", message.getType().toString().toLowerCase());
         
-        // 根据消息类型设置不同的字段
-        if (message.getType() == ChatMessage.MessageType.TEXT) {
-            result.put("text", message.getContent());
-        } else if (message.getType() == ChatMessage.MessageType.IMAGE) {
-            result.put("image", message.getContent());
-        } else {
-            result.put("text", message.getContent());
+        // 消息内容 - 同时支持图片和文字
+        result.put("content", message.getContent());
+        result.put("text", message.getContent());
+        if (message.getType() == ChatMessage.MessageType.IMAGE) {
+            result.put("image", message.getImage());
         }
         
         // 可选字段
-        if (message.getReceiverId() != null) {
-            result.put("receiverId", message.getReceiverId());
-        }
-        
         if (message.getRoomId() != null) {
             result.put("roomId", message.getRoomId());
         }
         
         // 添加发送者信息
-        if (!"system".equals(message.getSenderId())) {
-            User sender = userService.getUserById(message.getSenderId());
-            if (sender != null) {
-                Map<String, Object> senderInfo = new HashMap<>();
-                senderInfo.put("_id", sender.getId());
-                senderInfo.put("username", sender.getUsername());
-                senderInfo.put("profilePic", sender.getProfilePicture());
-                result.put("sender", senderInfo);
-            }
-        } else {
-            Map<String, Object> systemSender = new HashMap<>();
-            systemSender.put("_id", "system");
-            systemSender.put("username", "System");
-            result.put("sender", systemSender);
+        User sender = userService.getUserById(message.getSenderId());
+        if (sender != null) {
+            Map<String, Object> senderInfo = new HashMap<>();
+            senderInfo.put("id", sender.getId());
+            senderInfo.put("username", sender.getUsername());
+            senderInfo.put("fullName", sender.getFullName());
+            senderInfo.put("profilePic", sender.getProfilePicture());
+            result.put("sender", senderInfo);
         }
         
         return result;
@@ -704,6 +664,25 @@ public class SocketIOAdapter {
                     log.info("User {} marked as offline due to no active connections", userId);
                 }
             }
+        }
+    }
+
+    private void updateUserOnlineStatus(String userId, boolean isOnline) {
+        User user = userService.getUserById(userId);
+        if (user != null && user.isOnline() != isOnline) {
+            user.setOnline(isOnline);
+            userService.updateUser(user);
+            
+            // 广播用户状态更新
+            Map<String, Object> statusUpdate = new HashMap<>();
+            statusUpdate.put("type", "userStatus");
+            statusUpdate.put("userId", userId);
+            statusUpdate.put("online", isOnline);
+            statusUpdate.put("timestamp", System.currentTimeMillis());
+            
+            // 广播给所有连接的客户端
+            server.getBroadcastOperations().sendEvent("userStatus", statusUpdate);
+            log.info("User {} online status updated to: {}", userId, isOnline);
         }
     }
 }

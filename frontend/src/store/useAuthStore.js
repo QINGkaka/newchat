@@ -134,17 +134,18 @@ export const useAuthStore = create((set, get) => ({
             globalSocket.on('userStatus', (data) => {
                 console.log('Received user status update:', data);
                 set(state => {
-                    const updatedUsers = state.onlineUsers.map(user => 
-                        user.id === data.userId 
-                            ? { ...user, online: data.online }
-                            : user
-                    );
+                    const updatedUsers = state.onlineUsers.map(user => {
+                        if (user.id === data.userId) {
+                            console.log(`Updating user ${user.id} online status to ${data.online}`);
+                            return { ...user, online: data.online };
+                        }
+                        return user;
+                    });
                     
-                    // 如果用户不在列表中，可能需要重新获取完整列表
+                    // 如果用户不在列表中，立即请求完整的用户列表
                     if (!updatedUsers.some(user => user.id === data.userId)) {
-                        console.log('User not found in list, requesting full update...');
+                        console.log('User not in list, requesting full update...');
                         globalSocket.emit('getOnlineUsers');
-                        return state;
                     }
                     
                     return { ...state, onlineUsers: updatedUsers };
@@ -153,8 +154,8 @@ export const useAuthStore = create((set, get) => ({
 
             globalSocket.on('onlineUsers', (users) => {
                 console.log('Received online users list:', users);
-                // 确保用户列表包含在线状态，并保留现有用户的状态
                 set(state => {
+                    // 保留现有用户的状态
                     const currentUsers = new Map(
                         state.onlineUsers.map(user => [user.id, user])
                     );
@@ -167,6 +168,9 @@ export const useAuthStore = create((set, get) => ({
                     console.log('Updated online users:', updatedUsers);
                     return { ...state, onlineUsers: updatedUsers };
                 });
+                
+                // 立即发送心跳以更新状态
+                globalSocket.emit('ping');
             });
 
             // 添加重连成功后的处理
@@ -347,5 +351,29 @@ export const useAuthStore = create((set, get) => ({
     disconnectSocket() {
         console.log('Disconnecting socket...');
         get().cleanup();
+    },
+
+    subscribeToUserStatus: () => {
+        const socket = get().socket;
+        if (!socket) return;
+
+        socket.on("userStatus", (data) => {
+            console.log("Received user status update:", data);
+            const { onlineUsers } = get();
+            const updatedUsers = onlineUsers.map(user => {
+                if (user.id === data.userId) {
+                    return { ...user, online: data.online };
+                }
+                return user;
+            });
+            set({ onlineUsers: updatedUsers });
+        });
+    },
+
+    unsubscribeFromUserStatus: () => {
+        const socket = get().socket;
+        if (socket) {
+            socket.off("userStatus");
+        }
     }
 }));

@@ -100,7 +100,8 @@ class WebSocketClient {
                 ...message,
                 timestamp: Date.now(),
                 senderId: authUser.id,
-                senderName: authUser.name || authUser.email
+                senderName: authUser.fullName || authUser.email,
+                type: message.image ? 'image' : 'message'
             };
             
             console.log('Sending chat message:', messageWithTimestamp);
@@ -113,7 +114,10 @@ class WebSocketClient {
                             ...messageWithTimestamp,
                             _id: response.messageId,
                             messageId: response.messageId,
-                            createdAt: new Date().toISOString()
+                            createdAt: new Date().toISOString(),
+                            content: message.content || null,
+                            text: message.content || null,
+                            image: message.image || null
                         }
                     });
                 } else {
@@ -129,10 +133,8 @@ class WebSocketClient {
         const socket = this.getSocket();
         console.log('socket is: ', socket);
         if (socket) {
-            // 移除之前的监听器
-            // socket.off('sendMessage');
+            socket.off('newMessage');
             
-            // 添加新的消息监听器
             socket.on('newMessage', (message) => {
                 console.log('Received chat message:', message);
                 try {
@@ -141,11 +143,9 @@ class WebSocketClient {
                         _id: message.messageId || message._id,
                         createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
                         timestamp: message.timestamp || Date.now(),
-                        // 确保发送者信息存在
-                        sender: message.sender || {
-                            id: message.senderId,
-                            name: message.senderName
-                        }
+                        content: message.content || null,
+                        text: message.content || null,
+                        image: message.image || null
                     };
                     console.log('Formatted message:', formattedMessage);
                     handler(formattedMessage);
@@ -160,7 +160,7 @@ class WebSocketClient {
     removeMessageHandler(handler) {
         const socket = this.getSocket();
         if (socket) {
-            socket.off('message', handler);
+            socket.off('newMessage', handler);
         }
         this.messageHandlers.delete(handler);
     }

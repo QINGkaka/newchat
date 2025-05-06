@@ -15,9 +15,10 @@ import java.util.Set;
 public class ChatMessage {
     private String id;
     private String senderId;
-    private String content;
     private String receiverId;
     private String roomId;
+    private String content;
+    private String image;
     private long timestamp;
     private MessageType type;
     

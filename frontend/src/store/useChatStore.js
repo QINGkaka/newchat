@@ -50,19 +50,26 @@ export const useChatStore = create((set, get) => ({
 
     addMessage: (message) => {
         console.log('Adding message:', message);
-        const { messages } = get();
-        
-        // 检查消息是否已存在
-        const messageExists = messages.some(m => 
-            m._id === message._id || 
-            m.messageId === message.messageId ||
-            (m.senderId === message.senderId && 
-             m.timestamp === message.timestamp)
-        );
+        set(state => {
+            // 检查消息是否已存在
+            const messageExists = state.messages.some(m => 
+                m._id === message._id || 
+                m.messageId === message.messageId ||
+                (m.senderId === message.senderId && 
+                 m.timestamp === message.timestamp &&
+                 m.content === message.content)
+            );
 
-        if (!messageExists) {
-            set({ messages: [...messages, message] });
-        }
+            if (!messageExists) {
+                console.log('Message does not exist, adding to store:', message);
+                return {
+                    messages: [...state.messages, message].sort((a, b) => 
+                        (a.timestamp || a.createdAt) - (b.timestamp || b.createdAt)
+                    )
+                };
+            }
+            return state;
+        });
     },
 
     sendMessage: async (messageData) => {
@@ -75,30 +82,9 @@ export const useChatStore = create((set, get) => ({
         }
     },
 
-    // 订阅消息
-    subscribeToMessages: () => {
-        const { selectedUser } = get();
-        if (!selectedUser) return;
-
-        const socket = useAuthStore.getState().socket;
-
-        // 将newMessage改为sendMessage
-        socket.on("sendMessage", (newMessage) => {
-            const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
-            if (!isMessageSentFromSelectedUser) return;
-
-            // 将新消息追加到末尾
-            set({
-                messages: [...get().messages, newMessage],
-            });
-        });
-    },
-
-    // 取消订阅，如登出等
-    unsubscribeFromMessages: () => {
-        const socket = useAuthStore.getState().socket;
-        socket.off("sendMessage");
-    },
+    // 移除不需要的订阅方法，因为我们使用WebSocket客户端处理消息
+    subscribeToMessages: () => {},
+    unsubscribeFromMessages: () => {},
 
     setSelectedUser: (selectedUser) => {
         console.log('Setting selected user:', selectedUser);

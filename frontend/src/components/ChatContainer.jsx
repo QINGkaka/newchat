@@ -23,7 +23,7 @@ const ChatContainer = () => {
 
     useEffect(() => {
         console.log("*** selectedUser is: ", selectedUser);
-        if (!selectedUser?.id) return;
+        if (!selectedUser?.id || !authUser?.id) return;
 
         getMessages(selectedUser.id);
         
@@ -42,29 +42,41 @@ const ChatContainer = () => {
         // 添加消息处理器
         const messageHandler = (message) => {
             console.log('Received message in ChatContainer:', message);
-            if (message.type === 'message' && 
-                (message.senderId === selectedUser._id || message.senderId === authUser._id)) {
-                // 确保消息有正确的格式
+            // 检查消息是否属于当前聊天
+            if ((message.senderId === selectedUser.id && message.receiverId === authUser.id) || 
+                (message.senderId === authUser.id && message.receiverId === selectedUser.id)) {
+                console.log('Message belongs to current chat, adding to messages');
                 const formattedMessage = {
                     ...message,
                     _id: message.messageId || message._id,
+                    timestamp: message.timestamp || Date.now(),
                     createdAt: message.createdAt || new Date(message.timestamp).toISOString(),
-                    timestamp: message.timestamp || Date.now()
+                    content: message.content || message.text
                 };
                 addMessage(formattedMessage);
+            } else {
+                console.log('Message does not belong to current chat', {
+                    messageSenderId: message.senderId,
+                    messageReceiverId: message.receiverId,
+                    selectedUserId: selectedUser.id,
+                    authUserId: authUser.id
+                });
             }
         };
+
+        // 添加消息处理器
         wsClient.addMessageHandler(messageHandler);
 
+        // 清理函数
         return () => {
             wsClient.removeMessageHandler(messageHandler);
             if (wsClient.getConnectionStatus() === 'connected') {
-                wsClient.leaveRoom(selectedUser._id).catch(error => {
+                wsClient.leaveRoom(selectedUser.id).catch(error => {
                     console.error('Failed to leave room:', error);
                 });
             }
         };
-    }, [selectedUser._id, authUser._id, getMessages, addMessage]);
+    }, [selectedUser?.id, authUser?.id, getMessages, addMessage]);
 
     useEffect(() => {
         if (messageEndRef.current && messages) {
@@ -81,9 +93,9 @@ const ChatContainer = () => {
         const message = {
             type: 'message',
             roomId: null,
-            text: text,
+            content: text,
             image: image,
-            senderId: authUser._id,
+            senderId: authUser.id,
             receiverId: selectedUser.id,
             timestamp: Date.now()
         };
@@ -120,14 +132,13 @@ const ChatContainer = () => {
                 {messages.map((message) => (
                     <div
                         key={message._id || message.messageId}
-                        className={`chat ${message.senderId === authUser._id ? "chat-end" : "chat-start"}`}
-                        ref={messageEndRef}
+                        className={`chat ${message.senderId === authUser.id ? "chat-end" : "chat-start"}`}
                     >
                         <div className="chat-image avatar">
                             <div className="size-10 rounded-full border">
                                 <img
                                     src={
-                                        message.senderId === authUser._id
+                                        message.senderId === authUser.id
                                             ? authUser.profilePic || "/avatar.png"
                                             : selectedUser.profilePic || "/avatar.png"
                                     }
@@ -137,7 +148,7 @@ const ChatContainer = () => {
                         </div>
                         <div className="chat-header mb-1">
                             <time className="text-xs opacity-50 ml-1">
-                                {formatMessageTime(message.createdAt)}
+                                {formatMessageTime(message.timestamp || message.createdAt)}
                             </time>
                         </div>
                         <div className="chat-bubble flex flex-col">
@@ -148,10 +159,13 @@ const ChatContainer = () => {
                                     className="sm:max-w-[200px] rounded-md mb-2"
                                 />
                             )}
-                            {message.text && <p>{message.text}</p>}
+                            {(message.content || message.text) && (
+                                <p>{message.content || message.text}</p>
+                            )}
                         </div>
                     </div>
                 ))}
+                <div ref={messageEndRef} />
             </div>
 
             <MessageInput onSendMessage={handleSendMessage} />
