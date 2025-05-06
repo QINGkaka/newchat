@@ -320,7 +320,7 @@ export const useAuthStore = create((set, get) => ({
             // 将profilePic重命名为profilePicture
             const updatedData = {
                 ...data,
-                profilePicture: data.profilePic
+                profilePicture: data.profilePicture
             };
             delete updatedData.profilePic;
             
