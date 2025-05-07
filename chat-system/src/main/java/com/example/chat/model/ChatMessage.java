@@ -1,10 +1,13 @@
 package com.example.chat.model;
 
+import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.GenericGenerator;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -12,17 +15,33 @@ import java.util.Set;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Entity
+@Table(name = "chat_message")
 public class ChatMessage {
-    private String id;
+    @Id
+    @GeneratedValue(generator = "uuid2")
+    @GenericGenerator(name = "uuid2", strategy = "org.hibernate.id.UUIDGenerator")
+    private String id;  // 移除手动ID设置
+
+    @Column(name = "sender_id")
     private String senderId;
+
+    @Column(name = "receiver_id")
     private String receiverId;
+
+    @Column(name = "room_id")
     private String roomId;
+
+    @Lob
     private String content;
     private String image;
     private long timestamp;
+
+    @Enumerated(EnumType.STRING)
     private MessageType type;
-    
-    // 已读用户集合
+
+    @Convert(converter = StringSetConverter.class)
+    @Column(name = "read_by")
     @Builder.Default
     private Set<String> readBy = new HashSet<>();
     
@@ -55,5 +74,19 @@ public class ChatMessage {
      */
     public boolean isRead(String userId) {
         return readBy != null && readBy.contains(userId);
+    }
+}
+@Converter
+class StringSetConverter implements AttributeConverter<Set<String>, String> {
+    private static final String SPLIT_CHAR = ",";
+
+    @Override
+    public String convertToDatabaseColumn(Set<String> stringSet) {
+        return stringSet != null ? String.join(SPLIT_CHAR, stringSet) : "";
+    }
+
+    @Override
+    public Set<String> convertToEntityAttribute(String string) {
+        return string != null ? new HashSet<>(Arrays.asList(string.split(SPLIT_CHAR))) : new HashSet<>();
     }
 }
